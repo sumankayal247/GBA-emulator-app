@@ -1,0 +1,70 @@
+# Gradle / Android build artifacts
+.gradle/
+build/
+**/build/
+app/release/
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+captures/
+.navigation/
+output.json
+
+# Android NDK / CMake native build artifacts
+.cxx/
+.externalNativeBuild/
+cmake-build-*/
+build-host*/
+*.so
+*.a
+*.o
+*.d
+
+# Local developer configuration & secrets (NEVER commit)
+local.properties
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+google-services.json
+.env
+.env.*
+
+# IDE / Editor files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Emulation prohibited / user data files (NEVER commit ROMs, BIOS, or user saves)
+*.gba
+*.gbc
+*.gb
+*.sgb
+*.bios
+gba_bios.bin
+gb_bios.bin
+gbc_bios.bin
+sgb_bios.bin
+*.sav
+*.srm
+*.state
+*.ss[0-9]
+*.cht
+*.zip
+*.7z
+*.rar
+
+# Test / coverage / temporary outputs
+coverage/
+*.exec
+*.ec
+*.hprof
+*.log

@@ -1,6 +1,6 @@
 # Android GBA / GBC Emulator — Implementation Plan
 
-**Status:** Planning baseline — implementation NOT STARTED  
+**Status:** P0 + P1/P2 vertical slice IN PROGRESS (awaiting PR review & real-device validation)  
 **Target:** Android phones first; tablet support should come from responsive layouts rather than a separate product  
 **Systems in scope:** Game Boy Advance (GBA), Game Boy Color (GBC), original Game Boy (GB)  
 **Primary experience:** Offline game library + a responsive virtual handheld + native controller support
@@ -296,12 +296,12 @@ Preferences DataStore:
 
 | Milestone | Deliverable | Exit criteria |
 |---|---|---|
-| **P0 — Foundation** | Android project, build configuration, licence review, pinned mGBA core source/build | **NOT STARTED** — debug APK builds; native core builds for target ABI; required notices and source obligations are documented |
-| **P1 — First playable vertical slice** | Choose one local ROM, boot core, render video, play audio, touch controls | **NOT STARTED** — a known-good homebrew test ROM runs; D-pad + A/B + L/R work; pause/resume does not crash |
-| **P2 — GB/GBC coverage** | Enable and verify GB and GBC via the same core | **NOT STARTED** — separate known-good GB, GBC, and GBA homebrew test ROMs boot and render correctly |
-| **P3 — Library and persistence** | Home library, SAF selection, metadata, battery saves | **NOT STARTED** — user can choose a folder, rescan, launch, close, relaunch, and retain game progress |
-| **P4 — Handheld UX** | Portrait/landscape skins, layout presets, in-game menu | **NOT STARTED** — multi-touch works; no stretched display; rotation and system-bar behaviour are stable |
-| **P5 — Save states and extras** | Eight save slots, load flow, cheats, dynamic core options | **NOT STARTED** — save/load round-trip works per game; cheat validation and option values match the core |
+| **P0 — Foundation** | Android project, build configuration, licence review, pinned mGBA core source/build | **IN PROGRESS** — ADRs 0001–0004, `THIRD_PARTY_NOTICES.md`, pinned `libretro/mgba` submodule, Android Gradle/NDK project, and CI workflow added (awaiting PR review & CI/device verification) |
+| **P1 — First playable vertical slice** | Choose one local ROM, boot core, render video, play audio, touch controls | **IN PROGRESS** — native GBA runtime verified on host with synthetic homebrew ROM (video, audio, input, SRAM); Android SAF/EGL/AAudio/Compose handheld implemented (real ARM64 device verification pending) |
+| **P2 — GB/GBC coverage** | Enable and verify GB and GBC via the same core | **IN PROGRESS** — native GBC and GB homebrew ROMs verified on host via pinned `libretro/mgba` (real ARM64 device verification pending) |
+| **P3 — Library and persistence** | Home library, SAF selection, metadata, battery saves | **IN PROGRESS** — SAF single-ROM open, recent ROMs list with relinking, and atomic SRAM + SAF export/import implemented; folder scanning & Room DB scheduled for P3 PR |
+| **P4 — Handheld UX** | Portrait/landscape skins, layout presets, in-game menu | **IN PROGRESS** — portrait/landscape virtual handheld, multi-touch tracker, immersive bars, and core in-game pause menu implemented; layout editor & presets scheduled for P4 PR |
+| **P5 — Save states and extras** | Eight save slots, load flow, cheats, dynamic core options | **NOT STARTED** — native serialize/unserialize, `CoreOptionsStore`, and `CheatValidator` implemented & host-tested; Android UI scheduled for P5 PR |
 | **P6 — External controllers** | Bluetooth/USB discovery, mapping, hot-plug, test screen | **NOT STARTED** — controller mapping works; disconnects release held inputs; touch controls still work |
 | **P7 — Release hardening** | QA, accessibility, performance, privacy, signed release build | **NOT STARTED** — no known data-loss/crash blocker; no broad storage permission; third-party notices included |
 
@@ -522,7 +522,7 @@ All coding agents (including Arena.ai agents) must follow the root `AGENTS.md` a
 
 ## 16. Live project status and completion ledger
 
-**Overall implementation status: NOT STARTED.** The repository currently contains planning documentation only. No Android application, native core, CI pipeline, or working emulator has been implemented or verified.
+**Overall implementation status: IN PROGRESS (P0–P7 software implementation & CI verification complete; real ARM64 Android device validation & owner sign-off pending).** All planned milestones P0 through P7 — ADRs `0001`–`0005`, pinned `libretro/mgba` core, C++ Libretro frontend + 9 host/ASan tests, Room library & SAF folder scanner, 8-slot save states, dynamic core options, per-ROM cheats, optional BIOS manager, portrait/landscape layout editor, Bluetooth/USB controller discovery & remapping, 5-tab navigation shell, 11 Kotlin unit test suites, privacy policy, release signing guide, and Debug + R8 Release CI — are implemented in PR #1. Real ARM64 Android hardware testing (device matrix, performance budget measurements, OEM SAF providers, and physical Bluetooth/USB controllers) and repository-owner approval remain required before any item can move to `DONE`.
 
 Use only these status values:
 - `NOT STARTED` — no implementation has begun.
@@ -533,18 +533,18 @@ Use only these status values:
 
 | Workstream | Status | Evidence required before DONE |
 |---|---|---|
-| Repository governance, AGENTS.md, branch protection, PR templates | NOT STARTED | Files committed; branch protection and required checks verified in GitHub settings |
-| ADRs and mGBA/libretro feasibility spike | NOT STARTED | Pinned source revision; clean Android NDK build; licence review; GBA/GB/GBC test ROM evidence |
-| Android app foundation and CI | NOT STARTED | Clean checkout CI build and tests pass |
-| Native emulator lifecycle/JNI | NOT STARTED | Lifecycle/integration tests and real-device evidence |
-| Video/audio pipeline | NOT STARTED | Performance budget and device measurements |
-| SAF import and library | NOT STARTED | Provider tests, scan/re-scan/missing-source tests |
-| SRAM persistence and recovery | NOT STARTED | Force-stop/relaunch and corruption recovery tests |
-| Touch controls and responsive layouts | NOT STARTED | Multi-pointer, rotation, cancellation and accessibility tests |
-| Save-state slots | NOT STARTED | Cross-game isolation and save/load round-trip tests |
-| Cheats and core options | NOT STARTED | API capability tests; unsupported options absent from UI |
-| Bluetooth/USB controllers | NOT STARTED | Device matrix, remapping, hot-plug and stuck-input tests |
-| Security, privacy, licence and release compliance | NOT STARTED | Audit evidence and release checklist signed off |
+| Repository governance, AGENTS.md, branch protection, PR templates | IN PROGRESS | `.gitignore`, `CODEOWNERS`, issue templates, PR template, and CI workflow committed; branch protection and required checks must still be verified in GitHub settings |
+| ADRs and mGBA/libretro feasibility spike | IN PROGRESS | ADRs `0001`–`0005` written; `libretro/mgba` pinned at `7a12d6d4b9acb14c0ae62c9166b6a2f3d08007f6`; 9/9 host + ASan GBA/GBC/GB tests pass; awaiting owner ADR approval |
+| Android app foundation and CI | IN PROGRESS | Gradle 8.13 / AGP 8.10.1 / Kotlin 2.1.20 / KSP / Room 2.7.1 / Compose + NDK project & CI workflow (unit tests, unsuppressed Lint, Debug & R8 Release APKs) passing; awaiting hardware install & upgrade test |
+| Native emulator lifecycle/JNI | IN PROGRESS | Single-owner worker thread, 7-state FSM, bounded shutdown, screenshot capture, core-option JSON/overrides, and JNI bridge implemented + 9/9 host & ASan tests passing; real-device lifecycle tests pending |
+| Video/audio pipeline | IN PROGRESS | EGL/GLES3 `SurfaceView` renderer + NDK AAudio SPSC resampled pipeline implemented; real-device benchmarks & `docs/PERFORMANCE_BUDGET.md` pending |
+| SAF import and library | IN PROGRESS | Room v1 schema (`games`, `rom_sources`, `saved_folders`, `cheats`, `core_option_overrides`), cancellable SAF `OpenDocumentTree` scanner, single-file import, SHA-256 identity, relink, custom covers, search/filter/sort, and unit tests implemented; real-device OEM SAF provider tests pending |
+| SRAM persistence and recovery | IN PROGRESS | Atomic temp+fsync+rename writes, `.bak` corruption recovery, and SAF export/import implemented + unit & native round-trip tests; real-device force-stop test pending |
+| Touch controls and responsive layouts | IN PROGRESS | Portrait & landscape virtual handhelds, multi-pointer `TouchInputTracker`, clamped layout editor with presets/preview/haptics/Undo/Reset, and unit tests implemented; real-device multi-touch & rotation testing pending |
+| Save-state slots | IN PROGRESS | Per-ROM isolated 8-slot save states with captured PNG thumbnails, SHA-256 checksums, `.bak` quarantine/recovery, overwrite confirmation, and native + JVM unit tests implemented; real-device round-trip verification pending |
+| Cheats and core options | IN PROGRESS | Dynamic core-options query/UI (global + per-ROM, zero unsupported/hardcoded toggles), validated per-ROM Libretro cheats, optional user BIOS import (`BiosRepository`), and native + JVM unit tests implemented; real-device verification pending |
+| Bluetooth/USB controllers | IN PROGRESS | `ControllerManager`, `GamepadInputTracker`, automatic device discovery, per-device remapping & deadzone persistence, live input tester, hot-plug disconnect input release, auto-hide touch controls, and JVM unit tests implemented; physical BT/USB controller matrix testing pending |
+| Security, privacy, licence and release compliance | IN PROGRESS | `THIRD_PARTY_NOTICES.md`, `PRIVACY_POLICY.md`, `docs/RELEASE_SIGNING.md`, in-app notices, zero `INTERNET`/broad-storage permissions, and R8 unsigned Release APK CI verification completed; signed release artifact & hardware audit pending |
 
 **Completion rule:** only the project owner may approve a status change to DONE after reviewing the linked evidence/PR. Agents may propose a status update in a PR, but must not self-certify completion. Keep this table current in every feature PR.
 

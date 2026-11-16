@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, 'arena/**']
+
+permissions:
+  contents: read
+
+jobs:
+  native-host-tests:
+    name: Native C++ & mGBA Core Tests (Host + ASan)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with pinned mGBA submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ninja-build
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Build and run native test suite (RelWithDebInfo)
+        run: |
+          cmake -S app/src/main/cpp -B build-host -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DGBA_BUILD_HOST_TESTS=ON
+          cmake --build build-host --parallel
+          ctest --test-dir build-host --output-on-failure --verbose
+
+      - name: Build and run native test suite (ASan + UBSan)
+        run: |
+          cmake -S app/src/main/cpp -B build-host-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DGBA_BUILD_HOST_TESTS=ON
+          cmake --build build-host-asan --parallel
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+            ctest --test-dir build-host-asan --output-on-failure --verbose
+
+  android-build-and-tests:
+    name: Android NDK (arm64-v8a), Unit Tests, Lint, Debug & Release R8 APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with pinned mGBA submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK components (API 36, NDK 27.2.12479018, CMake 3.22.1)
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Kotlin unit tests
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee /tmp/unit-test.log
+
+      - name: Annotate unit test or Kotlin compile errors on failure
+        if: failure()
+        run: |
+          if [ -f /tmp/unit-test.log ]; then
+            grep -E "(^e: |error:|FAILED|FAILURE:|Caused by:)" /tmp/unit-test.log | tail -n 35 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
+
+      - name: Run Android Lint
+        run: ./gradlew lintDebug --stacktrace
+
+      - name: Annotate Android Lint issues on failure
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET, os
+          xml_path = "app/build/reports/lint-results-debug.xml"
+          if not os.path.exists(xml_path):
+              print("::error::lint-results-debug.xml not found")
+              raise SystemExit(0)
+          tree = ET.parse(xml_path)
+          issues = tree.findall(".//issue")
+          order = {"Fatal": 0, "Error": 1, "Warning": 2, "Informational": 3}
+          issues.sort(key=lambda i: order.get(i.attrib.get("severity", "Error"), 4))
+          for issue in issues:
+              sev = issue.attrib.get("severity", "Error")
+              if sev == "Informational":
+                  continue
+              iid = issue.attrib.get("id", "unknown")
+              msg = issue.attrib.get("message", "").replace("\n", " ")
+              loc = issue.find("location")
+              file_attr = loc.attrib.get("file", "") if loc is not None else ""
+              line_attr = loc.attrib.get("line", "1") if loc is not None else "1"
+              if file_attr.startswith(os.getcwd() + "/"):
+                  file_attr = file_attr[len(os.getcwd()) + 1:]
+              print(f"::error file={file_attr},line={line_attr}::[{iid}/{sev}] {msg}")
+          PY
+
+      - name: Assemble Debug & Unsigned Release (R8) APKs (arm64-v8a)
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace 2>&1 | tee /tmp/assemble.log
+
+      - name: Annotate build errors on failure
+        if: failure()
+        run: |
+          if [ -f /tmp/assemble.log ]; then
+            grep -E "(^e: |error:|FAILURE:|What went wrong:|Caused by:|Missing class)" /tmp/assemble.log | tail -n 35 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
+
+      - name: Verify Debug and Release APKs (ABI, native libs, no ROMs/BIOS, permissions)
+        run: |
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          for APK in \
+            "app/build/outputs/apk/debug/app-debug.apk" \
+            "app/build/outputs/apk/release/app-release-unsigned.apk"; do
+            echo "=== Inspecting $APK ==="
+            test -f "$APK"
+            unzip -l "$APK" | grep "lib/arm64-v8a/libmgba_libretro.so"
+            unzip -l "$APK" | grep "lib/arm64-v8a/libgba_frontend.so"
+            if unzip -l "$APK" | grep -E "lib/(armeabi-v7a|x86|x86_64)/"; then
+              echo "ERROR: Unexpected ABI packaged in $APK"
+              exit 1
+            fi
+            if unzip -l "$APK" | grep -iE "\.(gba|gbc|gb|bios)$|bios\.bin"; then
+              echo "ERROR: Prohibited ROM or BIOS asset found inside $APK"
+              exit 1
+            fi
+            PERMS=$("$AAPT2" dump permissions "$APK")
+            echo "$PERMS"
+            if echo "$PERMS" | grep -E "INTERNET|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE"; then
+              echo "ERROR: Prohibited broad storage or network permission detected in $APK"
+              exit 1
+            fi
+          done
+
+      - name: Upload Debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gba-emulator-debug-arm64
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Unsigned Release (R8) APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gba-emulator-release-unsigned-arm64
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
