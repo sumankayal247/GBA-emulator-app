@@ -86,9 +86,14 @@ jobs:
               print("::error::lint-results-debug.xml not found")
               raise SystemExit(0)
           tree = ET.parse(xml_path)
-          for issue in tree.findall(".//issue"):
-              iid = issue.attrib.get("id", "unknown")
+          issues = tree.findall(".//issue")
+          order = {"Fatal": 0, "Error": 1, "Warning": 2, "Informational": 3}
+          issues.sort(key=lambda i: order.get(i.attrib.get("severity", "Error"), 4))
+          for issue in issues:
               sev = issue.attrib.get("severity", "Error")
+              if sev == "Informational":
+                  continue
+              iid = issue.attrib.get("id", "unknown")
               msg = issue.attrib.get("message", "").replace("\n", " ")
               loc = issue.find("location")
               file_attr = loc.attrib.get("file", "") if loc is not None else ""
