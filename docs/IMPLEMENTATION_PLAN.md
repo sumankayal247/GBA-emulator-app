@@ -1,6 +1,6 @@
 # Android GBA / GBC Emulator — Implementation Plan
 
-**Status:** Planning baseline  
+**Status:** Planning baseline — implementation NOT STARTED  
 **Target:** Android phones first; tablet support should come from responsive layouts rather than a separate product  
 **Systems in scope:** Game Boy Advance (GBA), Game Boy Color (GBC), original Game Boy (GB)  
 **Primary experience:** Offline game library + a responsive virtual handheld + native controller support
@@ -296,14 +296,14 @@ Preferences DataStore:
 
 | Milestone | Deliverable | Exit criteria |
 |---|---|---|
-| **P0 — Foundation** | Android project, build configuration, licence review, pinned mGBA core source/build | Debug APK builds; native core builds for target ABI; required notices and source obligations are documented |
-| **P1 — First playable vertical slice** | Choose one local ROM, boot core, render video, play audio, touch controls | A known-good homebrew test ROM runs; D-pad + A/B + L/R work; pause/resume does not crash |
-| **P2 — GB/GBC coverage** | Enable and verify GB and GBC via the same core | Separate known-good GB, GBC, and GBA homebrew test ROMs boot and render correctly |
-| **P3 — Library and persistence** | Home library, SAF selection, metadata, battery saves | User can choose a folder, rescan, launch, close, relaunch, and retain game progress |
-| **P4 — Handheld UX** | Portrait/landscape skins, layout presets, in-game menu | Multi-touch works; no stretched display; rotation and system-bar behaviour are stable |
-| **P5 — Save states and extras** | Eight save slots, load flow, cheats, dynamic core options | Save/load round-trip works per game; cheat validation and option values match the core |
-| **P6 — External controllers** | Bluetooth/USB discovery, mapping, hot-plug, test screen | Controller mapping works; disconnects release held inputs; touch controls still work |
-| **P7 — Release hardening** | QA, accessibility, performance, privacy, signed release build | No known data-loss/crash blocker; no broad storage permission; third-party notices included |
+| **P0 — Foundation** | Android project, build configuration, licence review, pinned mGBA core source/build | **NOT STARTED** — debug APK builds; native core builds for target ABI; required notices and source obligations are documented |
+| **P1 — First playable vertical slice** | Choose one local ROM, boot core, render video, play audio, touch controls | **NOT STARTED** — a known-good homebrew test ROM runs; D-pad + A/B + L/R work; pause/resume does not crash |
+| **P2 — GB/GBC coverage** | Enable and verify GB and GBC via the same core | **NOT STARTED** — separate known-good GB, GBC, and GBA homebrew test ROMs boot and render correctly |
+| **P3 — Library and persistence** | Home library, SAF selection, metadata, battery saves | **NOT STARTED** — user can choose a folder, rescan, launch, close, relaunch, and retain game progress |
+| **P4 — Handheld UX** | Portrait/landscape skins, layout presets, in-game menu | **NOT STARTED** — multi-touch works; no stretched display; rotation and system-bar behaviour are stable |
+| **P5 — Save states and extras** | Eight save slots, load flow, cheats, dynamic core options | **NOT STARTED** — save/load round-trip works per game; cheat validation and option values match the core |
+| **P6 — External controllers** | Bluetooth/USB discovery, mapping, hot-plug, test screen | **NOT STARTED** — controller mapping works; disconnects release held inputs; touch controls still work |
+| **P7 — Release hardening** | QA, accessibility, performance, privacy, signed release build | **NOT STARTED** — no known data-loss/crash blocker; no broad storage permission; third-party notices included |
 
 ### Recommended build order
 
@@ -370,3 +370,212 @@ Use the screenshots as a **feature and layout guide**, not as a requirement to c
 - Preserve the five-tab information architecture but remove unrelated NES/3DS sections from the first release.
 
 **Planning rule:** implementation should begin only after the user reviews this plan and confirms the proposed native Android + mGBA/libretro direction.
+
+
+---
+
+## 11. Production engineering requirements (mandatory)
+
+The following requirements are release blockers, not optional polish.
+
+### 11.1 Runtime lifecycle and threading
+
+- Model the emulator as an explicit state machine: `Unloaded`, `Loading`, `Running`, `Paused`, `Stopping`, `Stopped`, and `Error`. Define legal transitions and reject invalid commands.
+- Exactly one owner controls the native core instance. Serialize all core API calls on the emulator worker thread unless the pinned core/API explicitly documents thread safety.
+- UI lifecycle and rendering-surface lifecycle must be independent. Surface recreation, rotation, activity recreation, app backgrounding, and process death must not accidentally create two core instances or leave a native thread running.
+- Define a bounded shutdown protocol: stop frame production, release held inputs, flush saves, stop audio, detach/release surface resources, then deinitialize the core. Handle timeout/failure without deadlocking the UI.
+- Handle Android audio focus, interruptions, route changes, Bluetooth headset changes, and app background/foreground transitions.
+- Define frame pacing, audio buffering, fast-forward throttling, thermal/battery behaviour, and recovery from audio/video device errors. Do not busy-loop while paused.
+- Native callbacks must not call Compose/UI code. JNI boundaries must validate handles, lengths, null pointers, buffer sizes, and lifecycle state.
+
+### 11.2 ROM, firmware, and save-file safety
+
+- Treat ROM and firmware files as untrusted input. Validate extension and readable content, enforce configurable size limits, handle truncated/corrupt files, and never trust filenames as identity.
+- Do not extract archives automatically in v1. If archive support is added later, defend against path traversal, decompression bombs, duplicate entries, and oversized files.
+- Avoid loading an entire large file into Java heap without a measured reason. Define a bounded streaming or app-private staging strategy compatible with SAF providers and the native core.
+- ROM identity should use a content hash (SHA-256) plus detected system; URI is a source locator, not a durable identity. Handle duplicate copies of the same ROM and same-title/different-ROM collisions.
+- Persist SAF URI permissions and detect revoked/moved/unavailable sources. Show a recoverable missing-file state and let the user relink the ROM without losing its saves.
+- Keep SRAM, save states, thumbnails, and metadata isolated by stable ROM identity. Use atomic writes, checksums/version metadata where appropriate, backup/restore, and corruption recovery.
+- Never silently overwrite a save-state slot. Show slot occupancy and confirm replacement; make save/load failures visible and actionable.
+- Define what happens if the app is force-stopped or killed while a save is being written. Do not claim that Android guarantees a final lifecycle callback.
+- Firmware selection must copy or retain a durable app-readable reference, verify expected size/hash only where the upstream core publishes reliable values, and explain that users must supply firmware they are entitled to use.
+
+### 11.3 Library correctness and metadata
+
+- SAF directory enumeration is provider-dependent. Support providers that do not expose filesystem paths and report partial/unreadable scans without losing already indexed games.
+- Use Room migrations from the first schema. Test upgrades from every released schema; do not destructively reset user libraries.
+- Make scan operations cancellable, incremental, idempotent, and bounded. Avoid duplicate records after repeated scans.
+- Separate a game record from a file/source record so duplicate ROM copies can be resolved without duplicating save identity.
+- Persist user edits and favourites independently from rescanned metadata.
+- Make delete/remove semantics explicit: remove from library must not delete ROM files; save deletion requires a separate explicit confirmation.
+- Use WorkManager only for deferrable background indexing/maintenance, not real-time emulation.
+
+### 11.4 Input, accessibility, and layout
+
+- Track each active pointer independently per logical control; correctly handle pointer-up, cancel, focus loss, view detach, and app pause. On every lifecycle interruption, release all pressed inputs.
+- Define deterministic conflict handling for D-pad versus analog stick, opposite directions, multiple controllers, and touch + physical input.
+- Handle Android key repeat, axis dead zones, analog-to-D-pad thresholds, controller reconnects, duplicate device names, and per-device mapping persistence.
+- Provide accessible labels and minimum touch targets for all app UI controls, adequate contrast, scalable text, keyboard/controller navigation where appropriate, and a reduced-motion option.
+- Layout editing must support reset/undo or safe discard, avoid off-screen controls, and validate overlapping/unsafe placements.
+- Keep the actual game viewport aspect ratio based on core-reported geometry where available; do not hard-code aspect ratios if the core reports a different value for a mode or border.
+
+### 11.5 Security, privacy, and distribution
+
+- Request no broad storage permission. Request only the SAF access needed for selected files/folders.
+- No account, analytics, ads, or network access is required for core gameplay. If analytics/crash reporting is ever proposed, document data collected, obtain appropriate consent, and make it opt-in where required.
+- Add a privacy policy that accurately describes the app's actual data flows before store publication. Do not claim "no data collected" until SDKs, crash reporting, and network traffic have been audited.
+- Keep signing keys, upload keys, API keys, and secrets out of Git. Use GitHub Actions secrets or a local secure signing process.
+- Generate an SBOM/dependency inventory for release, pin native source revisions and dependency versions, scan dependencies, and review all licences and notices.
+- Include a third-party notices page and comply with MPL-2.0 obligations for modified MPL-covered files and source distribution. Do not assume the whole frontend is automatically MPL-2.0 or GPL; assess each component and dependency separately.
+- Do not copy RetroArch frontend code unless its GPL obligations and distribution consequences are deliberately accepted and reviewed. Prefer implementing against the Libretro API.
+- Publish only builds for ABIs actually built and tested. Verify 64-bit compliance for Play distribution.
+- As of 31 August 2026, Google Play new apps and updates must target Android 16 / API 36 or higher. Set the Play release target accordingly at release time and re-check the policy immediately before submission. [Google Play target API policy](https://support.google.com/googleplay/android-developer/answer/11926878).
+- Set a deliberate minimum SDK based on device support and native dependency compatibility; document the rationale and test the oldest supported Android version. Do not silently raise or lower it.
+
+### 11.6 Reliability, observability, and recovery
+
+- Add structured, privacy-safe logs with session IDs and core version; never log ROM contents, save contents, or personal file paths unnecessarily.
+- Add crash diagnostics for Kotlin and native crashes, but do not enable a third-party upload SDK without a privacy review and consent decision.
+- Provide user-visible error states for unsupported files, missing ROMs, failed core initialization, missing firmware, invalid save states, storage-full conditions, and controller disconnects.
+- Test low-storage conditions, permission revocation, process death, app upgrade, corrupted preferences/database, and failed atomic writes.
+- Keep a recovery path for saves: backup before migration, preserve the last known good file, and never silently delete corrupt data.
+- Define an uninstall/data-loss warning: app-private saves are removed on uninstall unless the user exports/backups them.
+
+## 12. Test strategy and measurable release gates
+
+Tests must be committed with the feature they validate. A feature is not complete because it compiles or looks correct in a screenshot.
+
+### Required test layers
+
+1. **Native unit tests:** input mapping, file/ROM identity, save serialization, state transitions, core callback contracts, option parsing.
+2. **Kotlin unit tests:** repositories, Room migrations, URI permission recovery, settings, mapping profiles, validation and error mapping.
+3. **Integration tests:** JNI bridge, core lifecycle, video callback, audio callback, input, SRAM, state save/load, cheats, and core options.
+4. **Instrumented/device tests:** real Android hardware, rotations, process background/foreground, audio focus, SAF providers, Bluetooth and USB controllers.
+5. **End-to-end regression:** install → import/open ROM → play → save → force-stop/relaunch → load → verify progress; repeat for GBA, GBC, and GB.
+6. **Fuzz/negative tests:** malformed and truncated ROMs, invalid state files, malformed cheat input, invalid core option values, and JNI boundary misuse.
+7. **Performance tests:** frame pacing, dropped frames, audio underruns, input-to-display latency, startup time, memory, CPU, battery and thermal behaviour.
+8. **Release tests:** clean checkout reproducible build, signed APK/AAB, ABI inspection, dependency/licence report, privacy/network audit, and upgrade test.
+
+### Required release evidence
+
+- Maintain a device/OS matrix with exact device model, Android version, ABI, test ROM checksum, core revision, and results.
+- Test at least one lower/mid-range ARM64 phone and one current Android device. Do not claim universal Android compatibility from a single phone.
+- Set numeric performance budgets after measuring the first vertical slice on the agreed reference devices. Record baseline and regression thresholds in `docs/PERFORMANCE_BUDGET.md`; do not invent performance claims before measurement.
+- Every bug fix adds a regression test where technically feasible.
+- No release-blocking crashes, save corruption, stuck input, audio runaway, or unhandled native errors.
+- No P0/P1 security, privacy, licence, or data-loss issues remain open.
+- A release candidate must pass the full regression suite on a clean build and upgrade path.
+
+## 13. CI/CD and repository quality
+
+Required before calling the project release-ready:
+
+- Gradle wrapper committed; dependency and plugin versions pinned using version catalog or equivalent.
+- Native CMake/NDK versions pinned and documented.
+- GitHub Actions for formatting/lint, Kotlin unit tests, native tests/build, Android debug build, dependency checks, and PR validation.
+- CI must build from a clean checkout; no local untracked files or developer machine paths may be required.
+- Add formatting/lint rules and enforce them in CI. Do not disable a rule globally to hide a local issue.
+- Add baseline static analysis for Kotlin and native C/C++ (for example, Android Lint plus an appropriate C/C++ analyzer).
+- Add CODEOWNERS or equivalent review ownership for emulator/native architecture, persistence, security, and release configuration.
+- Add issue templates and a pull-request template with scope, design/ADR link, tests run, screenshots/video where UI changes, migration/data-loss assessment, licence/security impact, and rollback plan.
+- Protect `main`: no direct pushes by agents; merge only reviewed PRs with required checks green.
+- Keep generated binaries, ROMs, BIOS files, keystores, signing secrets, local IDE files, and user save files out of Git. Include a tested `.gitignore`.
+
+## 14. Architecture decisions and mandatory pull-request workflow
+
+Use Architecture Decision Records (ADRs) under `docs/adr/` for decisions that affect module boundaries, emulator/core choice, native bridge, threading, storage identity/save format, rendering/audio pipeline, supported Android versions, security/privacy, or distribution/licensing.
+
+**A change is "major architecture" if it changes any of these:**
+- Emulator core/API or native build strategy.
+- Module boundaries or core ownership/threading model.
+- ROM identity, storage layout, save-state/SRAM format, or migration strategy.
+- Rendering/audio pipeline or controller/input abstraction.
+- Minimum Android version, target SDK strategy, ABI support, or permission/security model.
+- Licence/dependency strategy, release/distribution model, or data collection.
+
+For every major architecture change, agents MUST:
+1. Stop and write/update the relevant ADR with context, options considered, consequences, migration and rollback plan.
+2. Implement the change on a dedicated branch; never commit directly to `main`.
+3. Add/update tests and documentation in the same branch.
+4. Run the full relevant checks and report exact commands/results. Never report a test as passed if it was not run.
+5. Open a **pull request at the end of that architecture task**, with a clear summary, ADR link, trade-offs, test evidence, screenshots/video for UI changes, data migration/compatibility risks, licence/security review, and rollback plan.
+6. Leave the PR open for human review. Do not merge, squash, close, or mark the plan item DONE without explicit owner approval.
+7. If blocked by missing credentials, hardware, ROM test fixtures, or external access, state the blocker and mark the item BLOCKED; do not fake validation or silently skip it.
+
+Small isolated changes may use a normal PR as repository policy requires. Any feature branch that touches multiple modules or persistent user data should use a PR even if it does not alter the architecture.
+
+## 15. Agent execution contract — no partial completion
+
+All coding agents (including Arena.ai agents) must follow the root `AGENTS.md` and this plan. The following rules are mandatory:
+
+- Read `AGENTS.md`, this plan, relevant ADRs, and existing code before editing.
+- Work in small, reviewable vertical slices, but finish each slice to production quality before moving on. "Small slice" does not mean stubbed, mocked, TODO-only, or half implemented.
+- Do not create fake buttons, placeholder success states, mock emulator output, hard-coded fake device/controller data, or UI that advertises unsupported core features.
+- Do not mark work done because code was written, a screen renders, or the build succeeds. All acceptance criteria and evidence for that item must pass.
+- No silent scope reduction. If a requirement cannot be met, explain the technical reason, propose alternatives, and wait for approval when it changes scope or architecture.
+- Do not add a second implementation beside an existing one without documenting why and a migration/removal plan.
+- Preserve working behaviour and user data. Database/save migrations require tests, backup/rollback strategy, and explicit review.
+- Do not suppress compiler warnings, lint, failing tests, or native errors without documenting the root cause and an approved fix.
+- No broad refactors, formatting churn, or unrelated dependency upgrades mixed into feature work.
+- Never commit ROMs, BIOS files, copyrighted game artwork, save files, credentials, signing keys, or private user data.
+- Keep documentation, tests, changelog, and plan status in sync with the implementation.
+
+## 16. Live project status and completion ledger
+
+**Overall implementation status: NOT STARTED.** The repository currently contains planning documentation only. No Android application, native core, CI pipeline, or working emulator has been implemented or verified.
+
+Use only these status values:
+- `NOT STARTED` — no implementation has begun.
+- `IN PROGRESS` — implementation exists but acceptance evidence is incomplete.
+- `BLOCKED` — cannot proceed; blocker and owner/action are recorded.
+- `DONE` — every acceptance criterion is met, tests pass, documentation is updated, and evidence/PR is linked.
+- `DEFERRED` — explicitly removed from the current release scope with owner approval and rationale.
+
+| Workstream | Status | Evidence required before DONE |
+|---|---|---|
+| Repository governance, AGENTS.md, branch protection, PR templates | NOT STARTED | Files committed; branch protection and required checks verified in GitHub settings |
+| ADRs and mGBA/libretro feasibility spike | NOT STARTED | Pinned source revision; clean Android NDK build; licence review; GBA/GB/GBC test ROM evidence |
+| Android app foundation and CI | NOT STARTED | Clean checkout CI build and tests pass |
+| Native emulator lifecycle/JNI | NOT STARTED | Lifecycle/integration tests and real-device evidence |
+| Video/audio pipeline | NOT STARTED | Performance budget and device measurements |
+| SAF import and library | NOT STARTED | Provider tests, scan/re-scan/missing-source tests |
+| SRAM persistence and recovery | NOT STARTED | Force-stop/relaunch and corruption recovery tests |
+| Touch controls and responsive layouts | NOT STARTED | Multi-pointer, rotation, cancellation and accessibility tests |
+| Save-state slots | NOT STARTED | Cross-game isolation and save/load round-trip tests |
+| Cheats and core options | NOT STARTED | API capability tests; unsupported options absent from UI |
+| Bluetooth/USB controllers | NOT STARTED | Device matrix, remapping, hot-plug and stuck-input tests |
+| Security, privacy, licence and release compliance | NOT STARTED | Audit evidence and release checklist signed off |
+
+**Completion rule:** only the project owner may approve a status change to DONE after reviewing the linked evidence/PR. Agents may propose a status update in a PR, but must not self-certify completion. Keep this table current in every feature PR.
+
+## 17. Corrections and core capability constraints
+
+The current Libretro mGBA core documentation states that it supports `.gba`, `.gbc`, and `.gb`; SRAM and save states; Libretro frontend cheat support; and core options. It also states that **native cheats, sensors, camera, and location are not supported** by this core. Therefore:
+
+- The app's cheat UI must implement the Libretro frontend cheat API (for supported code types) and must not claim native mGBA cheat support.
+- Do not implement tilt/solar sensor input in v1. The solar sensor *level* option is a core option, but sensor hardware input is listed as unsupported.
+- Do not promise LCD ghosting, colour correction, or audio filter options unless the pinned core revision actually exposes them. Query and display only options returned by the running core.
+- mGBA core options include (at the time of this plan's review) solar sensor level, opposing directional input, GB model, BIOS use/intro, Super Game Boy borders, idle-loop optimization, and frameskip. The exact list may change with the pinned revision.
+- BIOS files are listed as optional in the Libretro mGBA documentation; do not present them as universally required.
+- The mGBA project FAQ says there is no official Android/iOS port at present. This plan therefore requires an independently implemented Android frontend and a feasibility spike before committing to the engine for production.
+
+Sources: [mGBA Libretro core capabilities](https://docs.libretro.com/library/mgba/), [mGBA FAQ](https://mgba.io/faq.html).
+
+## 18. Release checklist and project handoff
+
+Before a public release, complete and link evidence for:
+- [ ] All MVP functional acceptance criteria.
+- [ ] Full automated and device regression suite.
+- [ ] Clean install and in-place upgrade tests.
+- [ ] Save backup/export and restore tests.
+- [ ] App lifecycle, audio focus, orientation, controller and SAF provider tests.
+- [ ] Performance budgets met on the declared device matrix.
+- [ ] Accessibility and localization review.
+- [ ] Privacy/network audit and published privacy policy.
+- [ ] Third-party licence inventory, notices, and source-offer/availability obligations.
+- [ ] Android target SDK and Play policy re-checked on submission date.
+- [ ] Signed release artifact built from a reviewed tag/commit in CI.
+- [ ] Release notes, known limitations, support contact, and rollback plan.
+- [ ] All plan workstreams DONE or explicitly DEFERRED with owner approval.
+
+This plan is a production-oriented engineering contract, not a guarantee that implementation is automatically production-ready. Production readiness is earned only by passing the evidence-based gates above.
