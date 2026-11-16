@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, 'arena/**']
+
+permissions:
+  contents: read
+
+jobs:
+  native-host-tests:
+    name: Native C++ & mGBA Core Tests (Host + ASan)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with pinned mGBA submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ninja-build
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Build and run native test suite (RelWithDebInfo)
+        run: |
+          cmake -S app/src/main/cpp -B build-host -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DGBA_BUILD_HOST_TESTS=ON
+          cmake --build build-host --parallel
+          ctest --test-dir build-host --output-on-failure --verbose
+
+      - name: Build and run native test suite (ASan + UBSan)
+        run: |
+          cmake -S app/src/main/cpp -B build-host-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DGBA_BUILD_HOST_TESTS=ON
+          cmake --build build-host-asan --parallel
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+            ctest --test-dir build-host-asan --output-on-failure --verbose
+
+  android-build-and-tests:
+    name: Android NDK (arm64-v8a), Unit Tests, Lint & Debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with pinned mGBA submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK components (API 36, NDK 27.2.12479018, CMake 3.22.1)
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Kotlin unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Run Android Lint
+        run: ./gradlew lintDebug --stacktrace
+
+      - name: Assemble Debug APK (arm64-v8a native core + frontend)
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify APK ABI, native libraries, no bundled ROMs/BIOS, and permissions
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          unzip -l "$APK" | grep "lib/arm64-v8a/libmgba_libretro.so"
+          unzip -l "$APK" | grep "lib/arm64-v8a/libgba_frontend.so"
+          if unzip -l "$APK" | grep -E "lib/(armeabi-v7a|x86|x86_64)/"; then
+            echo "ERROR: Unexpected ABI packaged in APK"
+            exit 1
+          fi
+          if unzip -l "$APK" | grep -iE "\.(gba|gbc|gb|bios)$|bios\.bin"; then
+            echo "ERROR: Prohibited ROM or BIOS asset found inside APK"
+            exit 1
+          fi
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          PERMS=$("$AAPT2" dump permissions "$APK")
+          echo "$PERMS"
+          if echo "$PERMS" | grep -E "INTERNET|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE"; then
+            echo "ERROR: Prohibited broad storage or network permission detected"
+            exit 1
+          fi
+
+      - name: Upload Debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gba-emulator-debug-arm64
+          path: app/build/outputs/apk/debug/app-debug.apk

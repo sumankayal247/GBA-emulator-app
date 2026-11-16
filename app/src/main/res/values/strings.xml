@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GBA Emulator</string>
+    <string name="home_subtitle">Game Boy Advance, Game Boy Color &amp; Game Boy</string>
+    <string name="action_open_rom">Open ROM</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_resume_game">Resume</string>
+    <string name="action_export_sram">Export Save (.sav)</string>
+    <string name="action_import_sram">Import Save (.sav)</string>
+    <string name="action_relink_rom">Relink ROM</string>
+    <string name="action_remove_recent">Remove from list</string>
+    <string name="empty_library_title">No games opened yet</string>
+    <string name="empty_library_body">Select a legally obtained .gba, .gbc, or .gb ROM file from your device using Android\'s system file picker. No games or BIOS files are bundled with this app.</string>
+    <string name="uninstall_warning">Battery saves (SRAM) are stored in app-private storage and are removed by Android if you uninstall this app. Use Export Save to keep external backups.</string>
+    <string name="bios_status_info">Running with mGBA\'s built-in HLE BIOS fallback (no proprietary BIOS required for standard playback). Optional user-supplied BIOS selection is planned for a future milestone.</string>
+</resources>

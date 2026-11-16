@@ -1,0 +1,9 @@
+# Code ownership for architecture, native emulation, persistence, security, and release configuration
+* @sumankayal247
+/docs/adr/ @sumankayal247
+/app/src/main/cpp/ @sumankayal247
+/third_party/ @sumankayal247
+/app/src/main/java/io/github/sumankayal247/gbaemulator/data/ @sumankayal247
+/app/src/main/java/io/github/sumankayal247/gbaemulator/emulator/ @sumankayal247
+/.github/ @sumankayal247
+/THIRD_PARTY_NOTICES.md @sumankayal247

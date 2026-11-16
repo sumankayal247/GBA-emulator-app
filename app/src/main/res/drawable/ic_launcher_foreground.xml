@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Minimalist original handheld silhouette -->
+    <path
+        android:fillColor="#161922"
+        android:pathData="M24,26 C24,22.7 26.7,20 30,20 L78,20 C81.3,20 84,22.7 84,26 L84,54 C84,57.3 81.3,60 78,60 L30,60 C26.7,60 24,57.3 24,54 Z" />
+    <path
+        android:fillColor="#2D9CFF"
+        android:pathData="M30,26 L78,26 L78,54 L30,54 Z" />
+    <!-- D-Pad -->
+    <path
+        android:fillColor="#E8ECF4"
+        android:pathData="M36,68 L42,68 L42,74 L48,74 L48,80 L42,80 L42,86 L36,86 L36,80 L30,80 L30,74 L36,74 Z" />
+    <!-- A / B Buttons -->
+    <path
+        android:fillColor="#E8ECF4"
+        android:pathData="M74,69 A5,5 0 1,0 74,79 A5,5 0 1,0 74,69 Z" />
+    <path
+        android:fillColor="#E8ECF4"
+        android:pathData="M62,76 A5,5 0 1,0 62,86 A5,5 0 1,0 62,76 Z" />
+</vector>
