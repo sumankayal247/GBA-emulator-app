@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Usb
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -86,13 +85,17 @@ fun ControllersScreen(
     val context = LocalContext.current
     var expandedDescriptor by remember { mutableStateOf<String?>(null) }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .background(EmulatorColors.DarkBackground)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .background(EmulatorColors.DarkBackground),
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+        ) {
         Text(
             text = "Controllers",
             style = MaterialTheme.typography.headlineMedium,
@@ -365,26 +368,52 @@ fun ControllersScreen(
             color = EmulatorColors.TextMuted,
         )
         Spacer(Modifier.height(24.dp))
-    }
+        }
 
-    // Active button remap modal
-    capturingBindingFor?.let { (_, button) ->
-        AlertDialog(
-            onDismissRequest = onCancelCapturingBinding,
-            containerColor = EmulatorColors.DialogBackground,
-            title = { Text("Map '${button.label}' button", color = EmulatorColors.TextPrimary) },
-            text = {
-                Text(
-                    "Press the desired physical button on your connected Bluetooth or USB controller now.",
-                    color = EmulatorColors.TextSecondary,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = onCancelCapturingBinding) {
-                    Text("Cancel", color = EmulatorColors.AccentCyan)
+        // In-window button remap capture overlay so hardware gamepad KeyEvents continue routing
+        // straight to MainActivity.onKeyDown without a separate Dialog window intercepting focus.
+        capturingBindingFor?.let { (_, button) ->
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .clickable(onClick = onCancelCapturingBinding)
+                    .padding(24.dp),
+            ) {
+                Surface(
+                    color = EmulatorColors.DialogBackground,
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, EmulatorColors.AccentBlue, RoundedCornerShape(18.dp)),
+                ) {
+                    Column(modifier = Modifier.padding(22.dp)) {
+                        Text(
+                            text = "Map '${button.label}' button",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = EmulatorColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = "Press the desired physical button on your connected Bluetooth or USB controller now.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = EmulatorColors.TextSecondary,
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.End,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            TextButton(onClick = onCancelCapturingBinding) {
+                                Text("Cancel", color = EmulatorColors.AccentCyan)
+                            }
+                        }
+                    }
                 }
-            },
-        )
+            }
+        }
     }
 }
 

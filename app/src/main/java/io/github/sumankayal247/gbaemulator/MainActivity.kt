@@ -427,13 +427,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         val shouldRouteToGamepad = currentDestination == AppDestination.GAMEPLAY ||
             currentTab == MainTab.CONTROLLERS
         if (shouldRouteToGamepad && appContainer.controllerManager.handleKeyEvent(event)) {
             return true
         }
-        return super.dispatchKeyEvent(event)
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        val shouldRouteToGamepad = currentDestination == AppDestination.GAMEPLAY ||
+            currentTab == MainTab.CONTROLLERS
+        if (shouldRouteToGamepad && appContainer.controllerManager.handleKeyEvent(event)) {
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
