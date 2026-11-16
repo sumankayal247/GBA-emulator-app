@@ -1,63 +1,108 @@
 package io.github.sumankayal247.gbaemulator.ui.gameplay
 
-import android.content.ContentResolver
-import android.net.Uri
 import android.view.Surface
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.github.sumankayal247.gbaemulator.AppContainer
 import io.github.sumankayal247.gbaemulator.data.preferences.PreferencesRepository
-import io.github.sumankayal247.gbaemulator.data.saves.SramSaveRepository
+import io.github.sumankayal247.gbaemulator.data.rom.LibraryRepository
 import io.github.sumankayal247.gbaemulator.domain.model.AppResult
-import io.github.sumankayal247.gbaemulator.domain.model.EmulatorError
+import io.github.sumankayal247.gbaemulator.domain.model.CheatCodeEntry
 import io.github.sumankayal247.gbaemulator.domain.model.EmulatorPreferences
 import io.github.sumankayal247.gbaemulator.domain.model.OrientationLock
+import io.github.sumankayal247.gbaemulator.domain.model.SaveStateSlot
 import io.github.sumankayal247.gbaemulator.domain.model.ScalingMode
+import io.github.sumankayal247.gbaemulator.emulator.ControllerManager
 import io.github.sumankayal247.gbaemulator.emulator.EmulatorSession
 import io.github.sumankayal247.gbaemulator.emulator.EmulatorSessionSnapshot
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+
+enum class ActiveGameplayDialog {
+    NONE,
+    MAIN_MENU,
+    SAVE_STATES,
+    LOAD_STATES,
+    CORE_OPTIONS,
+    CHEATS,
+}
 
 data class GameplayUiState(
     val session: EmulatorSessionSnapshot = EmulatorSessionSnapshot(),
     val preferences: EmulatorPreferences = EmulatorPreferences(),
-    val isMenuOpen: Boolean = false,
+    val activeDialog: ActiveGameplayDialog = ActiveGameplayDialog.NONE,
+    val saveStateSlots: List<SaveStateSlot> = emptyList(),
+    val activeRomCheats: List<CheatCodeEntry> = emptyList(),
+    val hasConnectedController: Boolean = false,
     val toastMessage: String? = null,
-)
+) {
+    val isAnyDialogOpen: Boolean
+        get() = activeDialog != ActiveGameplayDialog.NONE
+}
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class GameplayViewModel(
     private val emulatorSession: EmulatorSession,
+    private val libraryRepository: LibraryRepository,
     private val preferencesRepository: PreferencesRepository,
-    private val sramSaveRepository: SramSaveRepository,
+    private val controllerManager: ControllerManager,
 ) : ViewModel() {
 
-    private val menuOpen = MutableStateFlow(false)
+    private val activeDialog = MutableStateFlow(ActiveGameplayDialog.NONE)
+    private val slotsFlow = MutableStateFlow<List<SaveStateSlot>>(emptyList())
     private val toast = MutableStateFlow<String?>(null)
 
+    private val activeRomCheatsFlow = emulatorSession.snapshot
+        .map { it.activeRom?.romId }
+        .distinctUntilChanged()
+        .flatMapLatest { romId ->
+            if (romId.isNullOrBlank()) flowOf(emptyList())
+            else libraryRepository.observeCheats(romId)
+        }
+
     val uiState: StateFlow<GameplayUiState> = combine(
-        emulatorSession.snapshot,
-        preferencesRepository.preferencesFlow,
-        menuOpen,
+        combine(
+            emulatorSession.snapshot,
+            preferencesRepository.preferencesFlow,
+            activeDialog,
+            slotsFlow,
+        ) { session, prefs, dialog, slots ->
+            QuadState(session, prefs, dialog, slots)
+        },
+        activeRomCheatsFlow,
+        controllerManager.hasConnectedController,
         toast,
-    ) { session, prefs, isMenu, toastMsg ->
+    ) { quad, cheats, hasController, toastMsg ->
         GameplayUiState(
-            session = session,
-            preferences = prefs,
-            isMenuOpen = isMenu,
-            toastMessage = toastMsg ?: session.statusNotice,
+            session = quad.session,
+            preferences = quad.prefs,
+            activeDialog = quad.dialog,
+            saveStateSlots = quad.slots,
+            activeRomCheats = cheats,
+            hasConnectedController = hasController,
+            toastMessage = toastMsg ?: quad.session.statusNotice,
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000L),
         initialValue = GameplayUiState(),
+    )
+
+    private data class QuadState(
+        val session: EmulatorSessionSnapshot,
+        val prefs: EmulatorPreferences,
+        val dialog: ActiveGameplayDialog,
+        val slots: List<SaveStateSlot>,
     )
 
     fun attachSurface(surface: Surface, width: Int, height: Int) {
@@ -78,41 +123,151 @@ class GameplayViewModel(
 
     fun releaseAllInputs() {
         emulatorSession.releaseAllInputs()
+        controllerManager.releaseAllInputs()
     }
 
     fun openMenu() {
-        emulatorSession.releaseAllInputs()
-        menuOpen.value = true
+        releaseAllInputs()
+        activeDialog.value = ActiveGameplayDialog.MAIN_MENU
+        viewModelScope.launch { emulatorSession.pauseSession() }
+    }
+
+    fun closeAllDialogsAndResume() {
+        activeDialog.value = ActiveGameplayDialog.NONE
+        viewModelScope.launch { emulatorSession.resumeSession() }
+    }
+
+    fun openSaveStatesDialog() {
         viewModelScope.launch {
-            emulatorSession.pauseSession()
+            slotsFlow.value = emulatorSession.listSaveStateSlots()
+            activeDialog.value = ActiveGameplayDialog.SAVE_STATES
         }
     }
 
-    fun closeMenuAndResume() {
-        menuOpen.value = false
+    fun openLoadStatesDialog() {
         viewModelScope.launch {
-            emulatorSession.resumeSession()
+            slotsFlow.value = emulatorSession.listSaveStateSlots()
+            activeDialog.value = ActiveGameplayDialog.LOAD_STATES
         }
+    }
+
+    fun openCoreOptionsDialog() {
+        activeDialog.value = ActiveGameplayDialog.CORE_OPTIONS
+    }
+
+    fun openCheatsDialog() {
+        activeDialog.value = ActiveGameplayDialog.CHEATS
+    }
+
+    fun backToMainMenu() {
+        activeDialog.value = ActiveGameplayDialog.MAIN_MENU
     }
 
     fun onActivityPaused() {
-        emulatorSession.releaseAllInputs()
-        viewModelScope.launch {
-            emulatorSession.pauseSession()
-        }
+        releaseAllInputs()
+        viewModelScope.launch { emulatorSession.pauseSession() }
     }
 
     fun onActivityResumed() {
-        if (!menuOpen.value) {
-            viewModelScope.launch {
-                emulatorSession.resumeSession()
+        if (activeDialog.value == ActiveGameplayDialog.NONE) {
+            viewModelScope.launch { emulatorSession.resumeSession() }
+        }
+    }
+
+    fun saveStateToSlot(slotIndex: Int) {
+        viewModelScope.launch {
+            when (val res = emulatorSession.saveStateToSlot(slotIndex)) {
+                is AppResult.Failure -> toast.value = res.error.userMessage
+                is AppResult.Success -> {
+                    slotsFlow.value = emulatorSession.listSaveStateSlots()
+                    toast.value = "Saved State $slotIndex."
+                    activeDialog.value = ActiveGameplayDialog.NONE
+                    emulatorSession.resumeSession()
+                }
             }
         }
     }
 
-    fun saveSramNow() {
+    fun loadStateFromSlot(slotIndex: Int) {
         viewModelScope.launch {
-            when (val res = emulatorSession.flushSramNow()) {
+            when (val res = emulatorSession.loadStateFromSlot(slotIndex)) {
+                is AppResult.Failure -> toast.value = res.error.userMessage
+                is AppResult.Success -> {
+                    toast.value = res.value
+                    activeDialog.value = ActiveGameplayDialog.NONE
+                    emulatorSession.resumeSession()
+                }
+            }
+        }
+    }
+
+    fun deleteSaveStateSlot(slotIndex: Int) {
+        viewModelScope.launch {
+            emulatorSession.deleteSaveStateSlot(slotIndex)
+            slotsFlow.value = emulatorSession.listSaveStateSlots()
+            toast.value = "Deleted State $slotIndex."
+        }
+    }
+
+    fun setCoreOption(key: String, value: String, perGame: Boolean) {
+        viewModelScope.launch {
+            val ok = emulatorSession.setCoreOption(key, value, perGame)
+            if (!ok) {
+                toast.value = "Option value rejected by the active core."
+            }
+        }
+    }
+
+    fun addCheat(description: String, rawCode: String) {
+        val rom = emulatorSession.snapshot.value.activeRom ?: return
+        viewModelScope.launch {
+            when (val res = libraryRepository.addCheat(rom.romId, rom.system, description, rawCode)) {
+                is AppResult.Failure -> toast.value = res.error.userMessage
+                is AppResult.Success -> {
+                    syncActiveCheats()
+                    toast.value = "Added cheat '${res.value.description}'."
+                }
+            }
+        }
+    }
+
+    fun updateCheat(entry: CheatCodeEntry, description: String, rawCode: String) {
+        val rom = emulatorSession.snapshot.value.activeRom ?: return
+        viewModelScope.launch {
+            when (val res = libraryRepository.updateCheat(entry.id, rom.system, description, rawCode, entry.enabled)) {
+                is AppResult.Failure -> toast.value = res.error.userMessage
+                is AppResult.Success -> {
+                    syncActiveCheats()
+                    toast.value = "Updated cheat."
+                }
+            }
+        }
+    }
+
+    fun toggleCheat(id: Long, enabled: Boolean) {
+        viewModelScope.launch {
+            libraryRepository.toggleCheat(id, enabled)
+            syncActiveCheats()
+        }
+    }
+
+    fun deleteCheat(id: Long) {
+        viewModelScope.launch {
+            libraryRepository.deleteCheat(id)
+            syncActiveCheats()
+        }
+    }
+
+    private suspend fun syncActiveCheats() {
+        val res = emulatorSession.applyEnabledCheatsForActiveRom()
+        if (res is AppResult.Failure) {
+            toast.value = res.error.userMessage
+        }
+    }
+
+    fun flushBatterySaveNow() {
+        viewModelScope.launch {
+            when (val res = emulatorSession.flushBatterySave()) {
                 is AppResult.Failure -> toast.value = res.error.userMessage
                 is AppResult.Success -> {
                     toast.value = if (res.value) {
@@ -125,38 +280,18 @@ class GameplayViewModel(
         }
     }
 
-    fun exportActiveSram(destinationUri: Uri, contentResolver: ContentResolver) {
-        val rom = emulatorSession.snapshot.value.activeRom ?: return
-        viewModelScope.launch {
-            emulatorSession.flushSramNow()
-            val res = withContext(Dispatchers.IO) {
-                val out = runCatching { contentResolver.openOutputStream(destinationUri) }.getOrNull()
-                    ?: return@withContext AppResult.Failure(
-                        EmulatorError.SaveStorageFailure("Unable to open export file."),
-                    )
-                out.use { sramSaveRepository.exportSram(rom.system, rom.sha256, it) }
-            }
-            toast.value = when (res) {
-                is AppResult.Failure -> res.error.userMessage
-                is AppResult.Success -> "Exported ${res.value} bytes of battery save."
-            }
-        }
-    }
-
     fun restartGame() {
-        menuOpen.value = false
+        activeDialog.value = ActiveGameplayDialog.NONE
         viewModelScope.launch {
-            val res = emulatorSession.restartGame()
-            if (res is AppResult.Failure) {
-                toast.value = res.error.userMessage
-            }
+            emulatorSession.resetGame()
+            emulatorSession.resumeSession()
         }
     }
 
     fun quitToHome(onQuitComplete: () -> Unit) {
-        menuOpen.value = false
+        activeDialog.value = ActiveGameplayDialog.NONE
         viewModelScope.launch {
-            emulatorSession.quitSession()
+            emulatorSession.stopSession()
             onQuitComplete()
         }
     }
@@ -169,39 +304,38 @@ class GameplayViewModel(
         emulatorSession.setFastForward(enabled)
     }
 
-    fun toggleScalingMode() {
-        val current = emulatorSession.snapshot.value.scalingMode
-        val next = if (current == ScalingMode.ASPECT_FIT) {
-            ScalingMode.INTEGER_SCALE
+    fun toggleOrientationLock(locked: Boolean, currentIsLandscape: Boolean) {
+        val target = if (!locked) {
+            OrientationLock.AUTO
+        } else if (currentIsLandscape) {
+            OrientationLock.LANDSCAPE
         } else {
-            ScalingMode.ASPECT_FIT
+            OrientationLock.PORTRAIT
+        }
+        viewModelScope.launch { preferencesRepository.updateOrientationLock(target) }
+    }
+
+    fun toggleScalingMode() {
+        val next = when (emulatorSession.snapshot.value.scalingMode) {
+            ScalingMode.ASPECT_FIT -> ScalingMode.INTEGER_SCALE
+            ScalingMode.INTEGER_SCALE -> ScalingMode.ASPECT_FIT
         }
         emulatorSession.setScalingMode(next)
     }
 
-    fun cycleOrientationLock() {
-        val current = uiState.value.preferences.orientationLock
-        val next = when (current) {
-            OrientationLock.AUTO -> OrientationLock.PORTRAIT
-            OrientationLock.PORTRAIT -> OrientationLock.LANDSCAPE
-            OrientationLock.LANDSCAPE -> OrientationLock.AUTO
-        }
-        viewModelScope.launch { preferencesRepository.updateOrientationLock(next) }
-    }
-
     fun dismissToast() {
-        toast.update { null }
+        toast.value = null
         emulatorSession.clearStatusNotice()
     }
 
     class Factory(private val container: AppContainer) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return GameplayViewModel(
+        override fun <T : ViewModel> create(modelClass: Class<T>): T =
+            GameplayViewModel(
                 emulatorSession = container.emulatorSession,
+                libraryRepository = container.libraryRepository,
                 preferencesRepository = container.preferencesRepository,
-                sramSaveRepository = container.sramSaveRepository,
+                controllerManager = container.controllerManager,
             ) as T
-        }
     }
 }

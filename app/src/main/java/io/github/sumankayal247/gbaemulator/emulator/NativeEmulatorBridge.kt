@@ -19,6 +19,8 @@ class NativeEmulatorBridge {
         systemDir: String,
         saveDir: String,
         initialSram: ByteArray?,
+        initialOptionKeys: Array<String>?,
+        initialOptionValues: Array<String>?,
         startPaused: Boolean,
     ): String?
 
@@ -32,6 +34,18 @@ class NativeEmulatorBridge {
 
     external fun nativeExtractSram(): ByteArray?
 
+    external fun nativeSerializeState(): ByteArray?
+
+    external fun nativeUnserializeState(stateBytes: ByteArray): Boolean
+
+    external fun nativeCaptureScreenshotArgb(): IntArray?
+
+    external fun nativeGetCoreOptionsJson(): String?
+
+    external fun nativeSetCoreOption(key: String, value: String): Boolean
+
+    external fun nativeApplyCheats(enabledCodes: Array<String>): String?
+
     external fun nativeAttachSurface(surface: Surface, width: Int, height: Int)
 
     external fun nativeResizeSurface(width: Int, height: Int)
@@ -41,6 +55,8 @@ class NativeEmulatorBridge {
     external fun nativeSetScalingMode(mode: Int)
 
     external fun nativeSetTouchInputMask(mask: Int)
+
+    external fun nativeSetGamepadInputMask(mask: Int)
 
     external fun nativeReleaseAllInputs()
 

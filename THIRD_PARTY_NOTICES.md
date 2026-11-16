@@ -25,9 +25,9 @@ This application integrates open-source software components listed below. No com
 
 ---
 
-## 3. Android Jetpack, Kotlin, and Coroutines Libraries
+## 3. Android Jetpack, Kotlin, Room, KSP, and Coroutines Libraries
 
-All AndroidX, Jetpack Compose, Material 3, Lifecycle, DataStore, Activity, Core KTX, Kotlin Standard Library, and Kotlinx Coroutines artifacts pinned in `gradle/libs.versions.toml` are licensed under the **Apache License, Version 2.0**:
+All AndroidX, Jetpack Compose, Material 3, Lifecycle, Room (`2.7.1`), DataStore (`1.1.7`), Activity, Core KTX, Kotlin Standard Library (`2.1.20`), Kotlin Symbol Processing (`2.1.20-2.0.1`), and Kotlinx Coroutines (`1.10.2`) artifacts pinned in `gradle/libs.versions.toml` are licensed under the **Apache License, Version 2.0**:
 - https://www.apache.org/licenses/LICENSE-2.0
 
 ---
@@ -36,3 +36,4 @@ All AndroidX, Jetpack Compose, Material 3, Lifecycle, DataStore, Activity, Core 
 
 - **JUnit 4:** Eclipse Public License 1.0 (test classpath only)
 - **Kotlinx Coroutines Test:** Apache License 2.0 (test classpath only)
+- **AndroidX Room Testing:** Apache License 2.0 (test classpath only)

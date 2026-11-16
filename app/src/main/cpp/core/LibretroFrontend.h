@@ -42,6 +42,7 @@ struct LoadConfig {
     std::string systemDirectory;
     std::string saveDirectory;
     std::vector<uint8_t> initialSram;
+    std::vector<std::pair<std::string, std::string>> initialCoreOptions;
     double outputSampleRate{48000.0};
     bool startPaused{false};
 };
@@ -80,7 +81,9 @@ public:
     bool unserializeState(const std::vector<uint8_t>& stateData);
     bool applyCheats(const std::vector<std::string>& enabledCodes, std::string& errorOut);
     std::vector<CoreOptionDefinition> coreOptions() const;
+    std::string coreOptionsJson() const { return optionsStore_.toJson(); }
     bool setCoreOption(const std::string& key, const std::string& value);
+    bool captureLatestFrameArgb(uint32_t& outWidth, uint32_t& outHeight, std::vector<uint32_t>& outArgb) const;
 
     // Real-time controls (lock-free / non-blocking).
     void setTouchInputMask(uint16_t mask) noexcept { inputState_.setTouchMask(mask); }

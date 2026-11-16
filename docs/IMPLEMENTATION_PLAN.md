@@ -522,7 +522,7 @@ All coding agents (including Arena.ai agents) must follow the root `AGENTS.md` a
 
 ## 16. Live project status and completion ledger
 
-**Overall implementation status: IN PROGRESS (P0 + P1/P2 vertical slice under review).** Core ADRs, pinned `libretro/mgba` native core, C++ Libretro frontend + host GBA/GBC/GB integration tests, Android Kotlin/Compose + NDK/EGL/AAudio app, atomic SRAM persistence, and CI workflow have been implemented. Real ARM64 Android hardware validation and repository-owner approval remain required before any item can move to `DONE`.
+**Overall implementation status: IN PROGRESS (P0–P7 software implementation & CI verification complete; real ARM64 Android device validation & owner sign-off pending).** All planned milestones P0 through P7 — ADRs `0001`–`0005`, pinned `libretro/mgba` core, C++ Libretro frontend + 9 host/ASan tests, Room library & SAF folder scanner, 8-slot save states, dynamic core options, per-ROM cheats, optional BIOS manager, portrait/landscape layout editor, Bluetooth/USB controller discovery & remapping, 5-tab navigation shell, 11 Kotlin unit test suites, privacy policy, release signing guide, and Debug + R8 Release CI — are implemented in PR #1. Real ARM64 Android hardware testing (device matrix, performance budget measurements, OEM SAF providers, and physical Bluetooth/USB controllers) and repository-owner approval remain required before any item can move to `DONE`.
 
 Use only these status values:
 - `NOT STARTED` — no implementation has begun.
@@ -534,17 +534,17 @@ Use only these status values:
 | Workstream | Status | Evidence required before DONE |
 |---|---|---|
 | Repository governance, AGENTS.md, branch protection, PR templates | IN PROGRESS | `.gitignore`, `CODEOWNERS`, issue templates, PR template, and CI workflow committed; branch protection and required checks must still be verified in GitHub settings |
-| ADRs and mGBA/libretro feasibility spike | IN PROGRESS | ADRs 0001–0004 written; `libretro/mgba` pinned at `7a12d6d4b9acb14c0ae62c9166b6a2f3d08007f6`; host build + ASan + GBA/GBC/GB homebrew tests pass; awaiting CI `arm64-v8a` build & owner ADR approval |
-| Android app foundation and CI | IN PROGRESS | Gradle 8.13 / AGP 8.10.1 / Kotlin 2.1.20 / Compose + NDK project & CI workflow added; awaiting clean-checkout CI pass |
-| Native emulator lifecycle/JNI | IN PROGRESS | Single-owner worker thread, 7-state FSM, bounded shutdown, and JNI bridge implemented + host lifecycle tests passing; real-device lifecycle tests pending |
+| ADRs and mGBA/libretro feasibility spike | IN PROGRESS | ADRs `0001`–`0005` written; `libretro/mgba` pinned at `7a12d6d4b9acb14c0ae62c9166b6a2f3d08007f6`; 9/9 host + ASan GBA/GBC/GB tests pass; awaiting owner ADR approval |
+| Android app foundation and CI | IN PROGRESS | Gradle 8.13 / AGP 8.10.1 / Kotlin 2.1.20 / KSP / Room 2.7.1 / Compose + NDK project & CI workflow (unit tests, unsuppressed Lint, Debug & R8 Release APKs) passing; awaiting hardware install & upgrade test |
+| Native emulator lifecycle/JNI | IN PROGRESS | Single-owner worker thread, 7-state FSM, bounded shutdown, screenshot capture, core-option JSON/overrides, and JNI bridge implemented + 9/9 host & ASan tests passing; real-device lifecycle tests pending |
 | Video/audio pipeline | IN PROGRESS | EGL/GLES3 `SurfaceView` renderer + NDK AAudio SPSC resampled pipeline implemented; real-device benchmarks & `docs/PERFORMANCE_BUDGET.md` pending |
-| SAF import and library | IN PROGRESS | SAF `OpenDocument` streaming ingestion, SHA-256 ROM identity, and relinking implemented + Kotlin unit tests; full SAF directory tree scan & Room DB scheduled for P3 |
+| SAF import and library | IN PROGRESS | Room v1 schema (`games`, `rom_sources`, `saved_folders`, `cheats`, `core_option_overrides`), cancellable SAF `OpenDocumentTree` scanner, single-file import, SHA-256 identity, relink, custom covers, search/filter/sort, and unit tests implemented; real-device OEM SAF provider tests pending |
 | SRAM persistence and recovery | IN PROGRESS | Atomic temp+fsync+rename writes, `.bak` corruption recovery, and SAF export/import implemented + unit & native round-trip tests; real-device force-stop test pending |
-| Touch controls and responsive layouts | IN PROGRESS | Portrait/landscape virtual handheld & multi-pointer `TouchInputTracker` implemented + unit tests; layout editor presets & real-device multi-touch/rotation testing pending |
-| Save-state slots | NOT STARTED | Cross-game isolation and save/load round-trip tests (native serialize/unserialize already host-tested; 8-slot UI scheduled for P5) |
-| Cheats and core options | NOT STARTED | API capability tests; unsupported options absent from UI (native `CoreOptionsStore` & `CheatValidator` already host-tested; UI scheduled for P5) |
-| Bluetooth/USB controllers | NOT STARTED | Device matrix, remapping, hot-plug and stuck-input tests |
-| Security, privacy, licence and release compliance | IN PROGRESS | `THIRD_PARTY_NOTICES.md`, in-app notices, zero `INTERNET`/broad-storage permissions verified; full release audit & privacy policy pending for P7 |
+| Touch controls and responsive layouts | IN PROGRESS | Portrait & landscape virtual handhelds, multi-pointer `TouchInputTracker`, clamped layout editor with presets/preview/haptics/Undo/Reset, and unit tests implemented; real-device multi-touch & rotation testing pending |
+| Save-state slots | IN PROGRESS | Per-ROM isolated 8-slot save states with captured PNG thumbnails, SHA-256 checksums, `.bak` quarantine/recovery, overwrite confirmation, and native + JVM unit tests implemented; real-device round-trip verification pending |
+| Cheats and core options | IN PROGRESS | Dynamic core-options query/UI (global + per-ROM, zero unsupported/hardcoded toggles), validated per-ROM Libretro cheats, optional user BIOS import (`BiosRepository`), and native + JVM unit tests implemented; real-device verification pending |
+| Bluetooth/USB controllers | IN PROGRESS | `ControllerManager`, `GamepadInputTracker`, automatic device discovery, per-device remapping & deadzone persistence, live input tester, hot-plug disconnect input release, auto-hide touch controls, and JVM unit tests implemented; physical BT/USB controller matrix testing pending |
+| Security, privacy, licence and release compliance | IN PROGRESS | `THIRD_PARTY_NOTICES.md`, `PRIVACY_POLICY.md`, `docs/RELEASE_SIGNING.md`, in-app notices, zero `INTERNET`/broad-storage permissions, and R8 unsigned Release APK CI verification completed; signed release artifact & hardware audit pending |
 
 **Completion rule:** only the project owner may approve a status change to DONE after reviewing the linked evidence/PR. Agents may propose a status update in a PR, but must not self-certify completion. Keep this table current in every feature PR.
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdio>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -24,6 +25,7 @@ struct CoreOptionDefinition {
     std::string categoryKey;
     std::string defaultValue;
     std::string currentValue;
+    bool visible{true};
     std::vector<CoreOptionChoice> choices;
 };
 
@@ -31,6 +33,21 @@ struct CoreOptionDefinition {
 // Rejects unknown keys or unsupported values so UI never sets unverified core options.
 class CoreOptionsStore {
 public:
+    void setPendingOverrides(const std::vector<std::pair<std::string, std::string>>& overrides) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pendingOverrides_.clear();
+        for (const auto& kv : overrides) {
+            if (!kv.first.empty() && !kv.second.empty()) {
+                pendingOverrides_[kv.first] = kv.second;
+            }
+        }
+    }
+
+    void clearPendingOverrides() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pendingOverrides_.clear();
+    }
+
     void registerFromV2(const struct retro_core_options_v2* opts) {
         std::lock_guard<std::mutex> lock(mutex_);
         definitions_.clear();
@@ -46,6 +63,7 @@ public:
             def.info = src.info ? src.info : "";
             def.categoryKey = src.category_key ? src.category_key : "";
             def.defaultValue = src.default_value ? src.default_value : "";
+            def.visible = true;
 
             for (size_t v = 0; v < RETRO_NUM_CORE_OPTION_VALUES_MAX && src.values[v].value != nullptr; ++v) {
                 CoreOptionChoice choice;
@@ -59,7 +77,6 @@ public:
             }
             def.currentValue = def.defaultValue;
 
-            // Preserve any pending override if it is valid for this option.
             auto pendingIt = pendingOverrides_.find(def.key);
             if (pendingIt != pendingOverrides_.end() && hasChoice(def, pendingIt->second)) {
                 def.currentValue = pendingIt->second;
@@ -85,6 +102,7 @@ public:
             def.desc = src.desc ? src.desc : src.key;
             def.info = src.info ? src.info : "";
             def.defaultValue = src.default_value ? src.default_value : "";
+            def.visible = true;
             for (size_t v = 0; v < RETRO_NUM_CORE_OPTION_VALUES_MAX && src.values[v].value != nullptr; ++v) {
                 CoreOptionChoice choice;
                 choice.value = src.values[v].value;
@@ -95,6 +113,10 @@ public:
                 def.defaultValue = def.choices.front().value;
             }
             def.currentValue = def.defaultValue;
+            auto pendingIt = pendingOverrides_.find(def.key);
+            if (pendingIt != pendingOverrides_.end() && hasChoice(def, pendingIt->second)) {
+                def.currentValue = pendingIt->second;
+            }
             keyToIndex_[def.key] = definitions_.size();
             definitions_.push_back(std::move(def));
         }
@@ -117,6 +139,7 @@ public:
             CoreOptionDefinition def;
             def.key = vars[i].key;
             def.desc = (semi != std::string::npos) ? raw.substr(0, semi) : def.key;
+            def.visible = true;
             std::string valuesStr = (semi != std::string::npos) ? raw.substr(semi + 1) : raw;
             while (!valuesStr.empty() && valuesStr.front() == ' ') {
                 valuesStr.erase(valuesStr.begin());
@@ -139,10 +162,25 @@ public:
                 def.defaultValue = def.choices.front().value;
                 def.currentValue = def.defaultValue;
             }
+            auto pendingIt = pendingOverrides_.find(def.key);
+            if (pendingIt != pendingOverrides_.end() && hasChoice(def, pendingIt->second)) {
+                def.currentValue = pendingIt->second;
+            }
             keyToIndex_[def.key] = definitions_.size();
             definitions_.push_back(std::move(def));
         }
         dirty_.store(true, std::memory_order_release);
+    }
+
+    void setVisibility(const char* key, bool visible) {
+        if (!key) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = keyToIndex_.find(key);
+        if (it != keyToIndex_.end()) {
+            definitions_[it->second].visible = visible;
+        }
     }
 
     // Returns pointer to stable internal string value (valid while store is not re-registered).
@@ -187,6 +225,44 @@ public:
         return definitions_;
     }
 
+    // Serializes all dynamically advertised core options to RFC-8259 JSON for JNI transport.
+    std::string toJson() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::string out;
+        out.reserve(definitions_.size() * 256 + 16);
+        out.push_back('[');
+        for (size_t i = 0; i < definitions_.size(); ++i) {
+            if (i > 0) out.push_back(',');
+            const auto& d = definitions_[i];
+            out += "{\"key\":";
+            appendJsonString(out, d.key);
+            out += ",\"desc\":";
+            appendJsonString(out, d.desc);
+            out += ",\"info\":";
+            appendJsonString(out, d.info);
+            out += ",\"categoryKey\":";
+            appendJsonString(out, d.categoryKey);
+            out += ",\"defaultValue\":";
+            appendJsonString(out, d.defaultValue);
+            out += ",\"currentValue\":";
+            appendJsonString(out, d.currentValue);
+            out += ",\"visible\":";
+            out += d.visible ? "true" : "false";
+            out += ",\"choices\":[";
+            for (size_t c = 0; c < d.choices.size(); ++c) {
+                if (c > 0) out.push_back(',');
+                out += "{\"value\":";
+                appendJsonString(out, d.choices[c].value);
+                out += ",\"label\":";
+                appendJsonString(out, d.choices[c].label);
+                out.push_back('}');
+            }
+            out += "]}";
+        }
+        out.push_back(']');
+        return out;
+    }
+
     void clear() {
         std::lock_guard<std::mutex> lock(mutex_);
         definitions_.clear();
@@ -203,6 +279,31 @@ private:
             }
         }
         return false;
+    }
+
+    static void appendJsonString(std::string& out, const std::string& s) {
+        out.push_back('"');
+        for (unsigned char ch : s) {
+            switch (ch) {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b";  break;
+                case '\f': out += "\\f";  break;
+                case '\n': out += "\\n";  break;
+                case '\r': out += "\\r";  break;
+                case '\t': out += "\\t";  break;
+                default:
+                    if (ch < 0x20) {
+                        char hex[7];
+                        std::snprintf(hex, sizeof(hex), "\\u%04x", static_cast<unsigned>(ch));
+                        out += hex;
+                    } else {
+                        out.push_back(static_cast<char>(ch));
+                    }
+                    break;
+            }
+        }
+        out.push_back('"');
     }
 
     mutable std::mutex mutex_;

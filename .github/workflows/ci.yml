@@ -44,7 +44,7 @@ jobs:
             ctest --test-dir build-host-asan --output-on-failure --verbose
 
   android-build-and-tests:
-    name: Android NDK (arm64-v8a), Unit Tests, Lint & Debug APK
+    name: Android NDK (arm64-v8a), Unit Tests, Lint, Debug & Release R8 APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository with pinned mGBA submodule
@@ -71,7 +71,18 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run Kotlin unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee /tmp/unit-test.log
+
+      - name: Annotate unit test or Kotlin compile errors on failure
+        if: failure()
+        run: |
+          if [ -f /tmp/unit-test.log ]; then
+            grep -E "(^e: |error:|FAILED|FAILURE:|Caused by:)" /tmp/unit-test.log | tail -n 35 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
 
       - name: Run Android Lint
         run: ./gradlew lintDebug --stacktrace
@@ -103,44 +114,54 @@ jobs:
               print(f"::error file={file_attr},line={line_attr}::[{iid}/{sev}] {msg}")
           PY
 
-      - name: Assemble Debug APK (arm64-v8a native core + frontend)
+      - name: Assemble Debug & Unsigned Release (R8) APKs (arm64-v8a)
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/assemble.log
+          ./gradlew assembleDebug assembleRelease --stacktrace 2>&1 | tee /tmp/assemble.log
 
       - name: Annotate build errors on failure
         if: failure()
         run: |
           if [ -f /tmp/assemble.log ]; then
-            grep -E "(error:|FAILURE:|What went wrong:|Caused by:)" /tmp/assemble.log | tail -n 25 | while IFS= read -r line; do
+            grep -E "(^e: |error:|FAILURE:|What went wrong:|Caused by:|Missing class)" /tmp/assemble.log | tail -n 35 | while IFS= read -r line; do
               echo "::error::${line}"
             done
           fi
 
-      - name: Verify APK ABI, native libraries, no bundled ROMs/BIOS, and permissions
+      - name: Verify Debug and Release APKs (ABI, native libs, no ROMs/BIOS, permissions)
         run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
-          unzip -l "$APK" | grep "lib/arm64-v8a/libmgba_libretro.so"
-          unzip -l "$APK" | grep "lib/arm64-v8a/libgba_frontend.so"
-          if unzip -l "$APK" | grep -E "lib/(armeabi-v7a|x86|x86_64)/"; then
-            echo "ERROR: Unexpected ABI packaged in APK"
-            exit 1
-          fi
-          if unzip -l "$APK" | grep -iE "\.(gba|gbc|gb|bios)$|bios\.bin"; then
-            echo "ERROR: Prohibited ROM or BIOS asset found inside APK"
-            exit 1
-          fi
           AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
-          PERMS=$("$AAPT2" dump permissions "$APK")
-          echo "$PERMS"
-          if echo "$PERMS" | grep -E "INTERNET|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE"; then
-            echo "ERROR: Prohibited broad storage or network permission detected"
-            exit 1
-          fi
+          for APK in \
+            "app/build/outputs/apk/debug/app-debug.apk" \
+            "app/build/outputs/apk/release/app-release-unsigned.apk"; do
+            echo "=== Inspecting $APK ==="
+            test -f "$APK"
+            unzip -l "$APK" | grep "lib/arm64-v8a/libmgba_libretro.so"
+            unzip -l "$APK" | grep "lib/arm64-v8a/libgba_frontend.so"
+            if unzip -l "$APK" | grep -E "lib/(armeabi-v7a|x86|x86_64)/"; then
+              echo "ERROR: Unexpected ABI packaged in $APK"
+              exit 1
+            fi
+            if unzip -l "$APK" | grep -iE "\.(gba|gbc|gb|bios)$|bios\.bin"; then
+              echo "ERROR: Prohibited ROM or BIOS asset found inside $APK"
+              exit 1
+            fi
+            PERMS=$("$AAPT2" dump permissions "$APK")
+            echo "$PERMS"
+            if echo "$PERMS" | grep -E "INTERNET|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE"; then
+              echo "ERROR: Prohibited broad storage or network permission detected in $APK"
+              exit 1
+            fi
+          done
 
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: gba-emulator-debug-arm64
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Unsigned Release (R8) APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gba-emulator-release-unsigned-arm64
+          path: app/build/outputs/apk/release/app-release-unsigned.apk

@@ -30,4 +30,9 @@ data class EmulatorPreferences(
     val orientationLock: OrientationLock = OrientationLock.AUTO,
     val controlsOpacity: Float = 0.92f,
     val controlsScale: Float = 1.0f,
+    val hapticsEnabled: Boolean = true,
+    val autoHideTouchWithController: Boolean = true,
+    val reducedMotion: Boolean = false,
+    val portraitLayout: TouchLayoutProfile = TouchLayoutProfile.defaultPortrait(),
+    val landscapeLayout: TouchLayoutProfile = TouchLayoutProfile.defaultLandscape(),
 )

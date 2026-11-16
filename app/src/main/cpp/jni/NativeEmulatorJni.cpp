@@ -83,6 +83,8 @@ Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeLoa
     jstring jSystemDir,
     jstring jSaveDir,
     jbyteArray jInitialSram,
+    jobjectArray jInitialOptionKeys,
+    jobjectArray jInitialOptionValues,
     jboolean jStartPaused
 ) {
     if (!env || !jCorePath || !jRomPath) {
@@ -112,6 +114,24 @@ Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeLoa
     cfg.saveDirectory = jstringToStd(env, jSaveDir);
     cfg.outputSampleRate = static_cast<double>(outputRate);
     cfg.startPaused = (jStartPaused == JNI_TRUE);
+
+    if (jInitialOptionKeys != nullptr && jInitialOptionValues != nullptr) {
+        const jsize keyCount = env->GetArrayLength(jInitialOptionKeys);
+        const jsize valCount = env->GetArrayLength(jInitialOptionValues);
+        const jsize count = (keyCount < valCount) ? keyCount : valCount;
+        if (count > 0 && count <= 128) {
+            cfg.initialCoreOptions.reserve(static_cast<size_t>(count));
+            for (jsize i = 0; i < count; ++i) {
+                auto* jKey = static_cast<jstring>(env->GetObjectArrayElement(jInitialOptionKeys, i));
+                auto* jVal = static_cast<jstring>(env->GetObjectArrayElement(jInitialOptionValues, i));
+                if (jKey && jVal) {
+                    cfg.initialCoreOptions.emplace_back(jstringToStd(env, jKey), jstringToStd(env, jVal));
+                }
+                if (jKey) env->DeleteLocalRef(jKey);
+                if (jVal) env->DeleteLocalRef(jVal);
+            }
+        }
+    }
 
     if (jInitialSram != nullptr) {
         const jsize len = env->GetArrayLength(jInitialSram);
@@ -282,6 +302,138 @@ Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeSet
 ) {
     NativeRuntime& rt = getOrCreateRuntime();
     rt.frontend.setTouchInputMask(static_cast<uint16_t>(mask & 0xFFFF));
+}
+
+JNIEXPORT void JNICALL
+Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeSetGamepadInputMask(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/,
+    jint mask
+) {
+    NativeRuntime& rt = getOrCreateRuntime();
+    rt.frontend.setGamepadInputMask(static_cast<uint16_t>(mask & 0xFFFF));
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeSerializeState(
+    JNIEnv* env,
+    jobject /*thiz*/
+) {
+    if (!env) return nullptr;
+    NativeRuntime& rt = getOrCreateRuntime();
+    std::vector<uint8_t> stateBytes;
+    if (!rt.frontend.serializeState(stateBytes) || stateBytes.empty()) {
+        return nullptr;
+    }
+    jbyteArray arr = env->NewByteArray(static_cast<jsize>(stateBytes.size()));
+    if (!arr) return nullptr;
+    env->SetByteArrayRegion(
+        arr,
+        0,
+        static_cast<jsize>(stateBytes.size()),
+        reinterpret_cast<const jbyte*>(stateBytes.data())
+    );
+    return arr;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeUnserializeState(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jbyteArray jStateBytes
+) {
+    if (!env || !jStateBytes) return JNI_FALSE;
+    const jsize len = env->GetArrayLength(jStateBytes);
+    // Reject absurdly large state payloads (> 16 MiB) before allocating native memory.
+    if (len <= 0 || len > 16 * 1024 * 1024) {
+        return JNI_FALSE;
+    }
+    std::vector<uint8_t> bytes(static_cast<size_t>(len));
+    env->GetByteArrayRegion(jStateBytes, 0, len, reinterpret_cast<jbyte*>(bytes.data()));
+    NativeRuntime& rt = getOrCreateRuntime();
+    return rt.frontend.unserializeState(bytes) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeCaptureScreenshotArgb(
+    JNIEnv* env,
+    jobject /*thiz*/
+) {
+    if (!env) return nullptr;
+    NativeRuntime& rt = getOrCreateRuntime();
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint32_t> argb;
+    if (!rt.frontend.captureLatestFrameArgb(width, height, argb) || argb.empty()) {
+        return nullptr;
+    }
+    const size_t totalInts = 2 + argb.size();
+    jintArray out = env->NewIntArray(static_cast<jsize>(totalInts));
+    if (!out) return nullptr;
+    jint header[2] = {static_cast<jint>(width), static_cast<jint>(height)};
+    env->SetIntArrayRegion(out, 0, 2, header);
+    env->SetIntArrayRegion(
+        out,
+        2,
+        static_cast<jsize>(argb.size()),
+        reinterpret_cast<const jint*>(argb.data())
+    );
+    return out;
+}
+
+JNIEXPORT jstring JNICALL
+Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeGetCoreOptionsJson(
+    JNIEnv* env,
+    jobject /*thiz*/
+) {
+    if (!env) return nullptr;
+    NativeRuntime& rt = getOrCreateRuntime();
+    const std::string json = rt.frontend.coreOptionsJson();
+    return env->NewStringUTF(json.c_str());
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeSetCoreOption(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jstring jKey,
+    jstring jValue
+) {
+    if (!env || !jKey || !jValue) return JNI_FALSE;
+    NativeRuntime& rt = getOrCreateRuntime();
+    const std::string key = jstringToStd(env, jKey);
+    const std::string value = jstringToStd(env, jValue);
+    return rt.frontend.setCoreOption(key, value) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_io_github_sumankayal247_gbaemulator_emulator_NativeEmulatorBridge_nativeApplyCheats(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jobjectArray jEnabledCodes
+) {
+    if (!env) return nullptr;
+    std::vector<std::string> codes;
+    if (jEnabledCodes != nullptr) {
+        const jsize count = env->GetArrayLength(jEnabledCodes);
+        if (count < 0 || count > 256) {
+            return env->NewStringUTF("Too many cheat codes supplied (max 256).");
+        }
+        codes.reserve(static_cast<size_t>(count));
+        for (jsize i = 0; i < count; ++i) {
+            auto* jCode = static_cast<jstring>(env->GetObjectArrayElement(jEnabledCodes, i));
+            if (jCode) {
+                codes.push_back(jstringToStd(env, jCode));
+                env->DeleteLocalRef(jCode);
+            }
+        }
+    }
+    NativeRuntime& rt = getOrCreateRuntime();
+    std::string err;
+    if (!rt.frontend.applyCheats(codes, err)) {
+        return env->NewStringUTF(err.empty() ? "Failed to apply cheats." : err.c_str());
+    }
+    return nullptr;  // null == success
 }
 
 JNIEXPORT void JNICALL

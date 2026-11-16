@@ -1,7 +1,10 @@
 package io.github.sumankayal247.gbaemulator.ui.home
 
-import androidx.compose.foundation.BorderStroke
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,36 +19,47 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,305 +67,841 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.sumankayal247.gbaemulator.R
-import io.github.sumankayal247.gbaemulator.domain.model.EmulatorState
 import io.github.sumankayal247.gbaemulator.domain.model.GameSystem
 import io.github.sumankayal247.gbaemulator.domain.model.RomRecord
 import io.github.sumankayal247.gbaemulator.ui.theme.EmulatorColors
-import io.github.sumankayal247.gbaemulator.ui.theme.accentColor
-import java.text.DateFormat
-import java.util.Date
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Library Home screen inspired by `08-library-home.jpg`, strictly scoped to
+ * Game Boy Advance, Game Boy Color, and Game Boy (no NES/3DS placeholders).
+ */
 @Composable
 fun HomeScreen(
     state: HomeUiState,
-    onOpenRomClick: () -> Unit,
-    onResumeActiveSession: () -> Unit,
-    onLaunchRecent: (RomRecord) -> Unit,
-    onRelinkRom: (RomRecord) -> Unit,
+    onPickFolder: () -> Unit,
+    onImportSingleRom: () -> Unit,
+    onRescanFolders: () -> Unit,
+    onCancelScan: () -> Unit,
+    onSearchChange: (String) -> Unit,
+    onFilterChange: (LibraryFilter) -> Unit,
+    onSortChange: (LibrarySort) -> Unit,
+    onLaunchGame: (RomRecord) -> Unit,
+    onRelinkGame: (RomRecord) -> Unit,
+    onToggleFavorite: (RomRecord) -> Unit,
+    onRenameGame: (RomRecord, String) -> Unit,
+    onPickCoverImage: (RomRecord) -> Unit,
     onExportSram: (RomRecord) -> Unit,
     onImportSram: (RomRecord) -> Unit,
-    onRemoveRecent: (RomRecord) -> Unit,
-    onOpenSettings: () -> Unit,
-    onDismissBanner: () -> Unit,
+    onRemoveFromLibrary: (RomRecord) -> Unit,
+    onDeleteAllSaves: (RomRecord) -> Unit,
+    onDismissBanners: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val hasActiveGame = state.session.activeRom != null &&
-        (state.session.state == EmulatorState.RUNNING || state.session.state == EmulatorState.PAUSED)
+    var renamingGame by remember { mutableStateOf<RomRecord?>(null) }
+    var deletingSavesFor by remember { mutableStateOf<RomRecord?>(null) }
+    var seeAllSystem by remember { mutableStateOf<GameSystem?>(null) }
 
-    Scaffold(
-        containerColor = EmulatorColors.DarkBackground,
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmulatorColors.DarkBackground,
-                    titleContentColor = EmulatorColors.AccentBlue,
-                ),
-                title = {
-                    Column {
-                        Text(
-                            text = stringResource(R.string.app_name),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = EmulatorColors.AccentBlue,
-                        )
-                        Text(
-                            text = stringResource(R.string.home_subtitle),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = EmulatorColors.TextSecondary,
-                        )
-                    }
-                },
-                actions = {
-                    if (hasActiveGame) {
-                        Button(
-                            onClick = onResumeActiveSession,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = EmulatorColors.AccentBlue,
-                                contentColor = Color(0xFF041423),
-                            ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.padding(end = 4.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = stringResource(R.string.action_resume_game),
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = stringResource(R.string.action_settings),
-                            tint = EmulatorColors.TextPrimary,
-                        )
-                    }
-                },
-            )
-        },
-    ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(EmulatorColors.DarkBackground)
+            .padding(horizontal = 16.dp),
+    ) {
+        Spacer(Modifier.height(14.dp))
+
+        // Top Title Row matching 08-library-home.jpg
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            // Primary SAF ROM selection card (inspired by 08-library-home.jpg header bar)
-            item(key = "rom_picker_card") {
-                RomPickerBanner(
-                    isLoading = state.isLoadingRom,
-                    onOpenRomClick = onOpenRomClick,
+            Text(
+                text = "GBA Emulator",
+                style = MaterialTheme.typography.headlineMedium,
+                color = EmulatorColors.AccentBlue,
+                fontWeight = FontWeight.Bold,
+            )
+
+            // Sort selector pill
+            Surface(
+                color = EmulatorColors.CardSurface,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(10.dp))
+                    .clickable {
+                        val nextIdx = (state.sort.ordinal + 1) % LibrarySort.entries.size
+                        onSortChange(LibrarySort.entries[nextIdx])
+                    },
+            ) {
+                Text(
+                    text = "Sort: ${state.sort.label}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = EmulatorColors.TextSecondary,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                 )
             }
+        }
 
-            // Status / error banner with optional Relink recovery action
-            if (state.bannerMessage != null) {
-                item(key = "status_banner") {
-                    StatusBannerCard(
-                        message = state.bannerMessage,
-                        isError = state.isBannerError,
-                        relinkTarget = state.relinkTarget,
-                        onRelink = onRelinkRom,
-                        onDismiss = onDismissBanner,
+        Spacer(Modifier.height(12.dp))
+
+        // Game Directory Bar matching 08-library-home.jpg (Folder picker + Import file + Rescan)
+        Surface(
+            color = EmulatorColors.CardSurface,
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(14.dp)),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(EmulatorColors.AccentBlue.copy(alpha = 0.16f))
+                        .clickable(onClick = onPickFolder),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Folder,
+                        contentDescription = "Choose game folder",
+                        tint = EmulatorColors.AccentBlue,
                     )
                 }
-            }
 
-            if (state.recentGames.isEmpty()) {
-                item(key = "empty_state") {
-                    EmptyLibraryCard(onOpenRomClick = onOpenRomClick)
-                }
-            } else {
-                // Group cleanly by GBA, GBC, and GB (strictly v1 in-scope systems)
-                for (system in GameSystem.entries) {
-                    val gamesForSystem = state.recentGames.filter { it.system == system }
-                    if (gamesForSystem.isEmpty()) continue
+                Spacer(Modifier.width(12.dp))
 
-                    item(key = "header_${system.id}") {
-                        SystemSectionHeader(system = system, count = gamesForSystem.size)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onPickFolder),
+                ) {
+                    Text(
+                        text = "Game directory",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = EmulatorColors.TextPrimary,
+                    )
+                    val folderSummary = when (state.savedFolders.size) {
+                        0 -> "Tap to select a ROM folder"
+                        1 -> ".../${state.savedFolders.first().displayName}"
+                        else -> "${state.savedFolders.size} folders configured"
                     }
-                    items(items = gamesForSystem, key = { it.romId }) { record ->
-                        RecentRomCard(
-                            record = record,
-                            onLaunch = { onLaunchRecent(record) },
-                            onRelink = { onRelinkRom(record) },
-                            onExportSram = { onExportSram(record) },
-                            onImportSram = { onImportSram(record) },
-                            onRemove = { onRemoveRecent(record) },
+                    Text(
+                        text = folderSummary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = EmulatorColors.AccentCyan,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                IconButton(onClick = onImportSingleRom) {
+                    Icon(
+                        imageVector = Icons.Filled.FolderOpen,
+                        contentDescription = "Open single ROM file",
+                        tint = EmulatorColors.TextPrimary,
+                    )
+                }
+
+                if (state.isScanningFolders) {
+                    IconButton(onClick = onCancelScan) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = EmulatorColors.AccentCyan,
+                        )
+                    }
+                } else {
+                    IconButton(onClick = onRescanFolders) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Rescan game folders",
+                            tint = EmulatorColors.TextPrimary,
                         )
                     }
                 }
             }
         }
-    }
-}
 
-@Composable
-private fun RomPickerBanner(
-    isLoading: Boolean,
-    onOpenRomClick: () -> Unit,
-) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = EmulatorColors.DarkSurface),
-        border = BorderStroke(1.dp, EmulatorColors.DarkBorder),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Spacer(Modifier.height(10.dp))
+
+        // Search box
+        OutlinedTextField(
+            value = state.searchQuery,
+            onValueChange = onSearchChange,
+            placeholder = { Text("Search games...", color = EmulatorColors.TextMuted) },
+            leadingIcon = {
+                Icon(Icons.Filled.Search, contentDescription = null, tint = EmulatorColors.TextSecondary)
+            },
+            trailingIcon = if (state.searchQuery.isNotEmpty()) {
+                {
+                    IconButton(onClick = { onSearchChange("") }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Clear search", tint = EmulatorColors.TextSecondary)
+                    }
+                }
+            } else {
+                null
+            },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = EmulatorColors.CardSurface,
+                unfocusedContainerColor = EmulatorColors.CardSurface,
+                focusedBorderColor = EmulatorColors.AccentBlue,
+                unfocusedBorderColor = EmulatorColors.CardBorder,
+                focusedTextColor = EmulatorColors.TextPrimary,
+                unfocusedTextColor = EmulatorColors.TextPrimary,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        // System + Favorites filter chips
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(EmulatorColors.AccentBlueContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.FolderOpen,
-                    contentDescription = null,
-                    tint = EmulatorColors.AccentBlue,
-                    modifier = Modifier.size(26.dp),
+            items(LibraryFilter.entries) { chip ->
+                FilterChip(
+                    selected = state.filter == chip,
+                    onClick = {
+                        seeAllSystem = null
+                        onFilterChange(chip)
+                    },
+                    label = { Text(chip.label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = EmulatorColors.CardSurface,
+                        labelColor = EmulatorColors.TextSecondary,
+                        selectedContainerColor = EmulatorColors.AccentBlue.copy(alpha = 0.25f),
+                        selectedLabelColor = EmulatorColors.AccentCyan,
+                    ),
                 )
             }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Select ROM File",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = EmulatorColors.TextPrimary,
+        }
+
+        // Banners
+        if (state.errorBanner != null) {
+            Spacer(Modifier.height(8.dp))
+            StatusCard(
+                message = state.errorBanner,
+                isError = true,
+                actionLabel = if (state.relinkNeededForRom != null) "Relink ROM" else null,
+                onAction = state.relinkNeededForRom?.let { rom -> { onRelinkGame(rom) } },
+                onDismiss = onDismissBanners,
+            )
+        } else if (state.statusBanner != null) {
+            Spacer(Modifier.height(8.dp))
+            StatusCard(
+                message = state.statusBanner,
+                isError = false,
+                actionLabel = null,
+                onAction = null,
+                onDismiss = onDismissBanners,
+            )
+        }
+
+        if (state.isLoadingRom) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = EmulatorColors.AccentCyan,
                 )
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Supports user-owned .gba, .gbc & .gb files via Android SAF",
+                    text = "Validating ROM & starting mGBA...",
                     style = MaterialTheme.typography.bodySmall,
                     color = EmulatorColors.TextSecondary,
                 )
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                onClick = onOpenRomClick,
-                enabled = !isLoading,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = EmulatorColors.AccentBlue,
-                    contentColor = Color(0xFF041423),
-                ),
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        if (state.allGames.isEmpty()) {
+            EmptyLibraryCard(
+                onPickFolder = onPickFolder,
+                onImportSingleRom = onImportSingleRom,
+            )
+        } else if (state.filteredGames.isEmpty()) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
             ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
+                Text(
+                    text = "No games match the current filter.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = EmulatorColors.TextSecondary,
+                )
+            }
+        } else {
+            val groupedBySystem = remember(state.filteredGames) {
+                listOf(GameSystem.GBA, GameSystem.GBC, GameSystem.GB)
+                    .map { sys -> sys to state.filteredGames.filter { it.system == sys } }
+                    .filter { it.second.isNotEmpty() }
+            }
+
+            val showingSingleList = state.filter != LibraryFilter.ALL ||
+                state.searchQuery.isNotBlank() ||
+                seeAllSystem != null
+
+            LazyColumn(
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                if (showingSingleList) {
+                    val itemsToShow = seeAllSystem?.let { sys ->
+                        state.filteredGames.filter { it.system == sys }
+                    } ?: state.filteredGames
+
+                    if (seeAllSystem != null) {
+                        item {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = seeAllSystem!!.displayName,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = EmulatorColors.TextPrimary,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                TextButton(onClick = { seeAllSystem = null }) {
+                                    Text("Back to shelves", color = EmulatorColors.AccentCyan)
+                                }
+                            }
+                        }
+                    }
+
+                    items(itemsToShow, key = { it.romId }) { rom ->
+                        LibraryListRowCard(
+                            rom = rom,
+                            onPlay = { onLaunchGame(rom) },
+                            onToggleFavorite = { onToggleFavorite(rom) },
+                            onRename = { renamingGame = rom },
+                            onPickCover = { onPickCoverImage(rom) },
+                            onExportSram = { onExportSram(rom) },
+                            onImportSram = { onImportSram(rom) },
+                            onRelink = { onRelinkGame(rom) },
+                            onRemoveFromLibrary = { onRemoveFromLibrary(rom) },
+                            onDeleteSaves = { deletingSavesFor = rom },
+                        )
+                    }
+                } else {
+                    groupedBySystem.forEach { (system, games) ->
+                        item(key = "shelf_${system.id}") {
+                            Column {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .size(28.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(systemAccentColor(system)),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.SportsEsports,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(
+                                            text = system.displayName,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = EmulatorColors.TextPrimary,
+                                        )
+                                    }
+                                    TextButton(onClick = { seeAllSystem = system }) {
+                                        Text("See all (${games.size})", color = EmulatorColors.AccentCyan)
+                                    }
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    items(games, key = { it.romId }) { rom ->
+                                        ShelfGameCard(
+                                            rom = rom,
+                                            onPlay = { onLaunchGame(rom) },
+                                            onToggleFavorite = { onToggleFavorite(rom) },
+                                            onRename = { renamingGame = rom },
+                                            onPickCover = { onPickCoverImage(rom) },
+                                            onExportSram = { onExportSram(rom) },
+                                            onImportSram = { onImportSram(rom) },
+                                            onRelink = { onRelinkGame(rom) },
+                                            onRemoveFromLibrary = { onRemoveFromLibrary(rom) },
+                                            onDeleteSaves = { deletingSavesFor = rom },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    renamingGame?.let { rom ->
+        var text by remember(rom.romId) { mutableStateOf(rom.effectiveTitle) }
+        AlertDialog(
+            onDismissRequest = { renamingGame = null },
+            containerColor = EmulatorColors.DialogBackground,
+            title = { Text("Rename game", color = EmulatorColors.TextPrimary) },
+            text = {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    label = { Text("Display title") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRenameGame(rom, text)
+                        renamingGame = null
+                    },
+                ) {
+                    Text("Save", color = EmulatorColors.AccentCyan)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingGame = null }) {
+                    Text("Cancel", color = EmulatorColors.TextSecondary)
+                }
+            },
+        )
+    }
+
+    deletingSavesFor?.let { rom ->
+        AlertDialog(
+            onDismissRequest = { deletingSavesFor = null },
+            containerColor = EmulatorColors.DialogBackground,
+            title = { Text("Delete all saves?", color = EmulatorColors.ErrorRed) },
+            text = {
+                Text(
+                    "This permanently deletes the battery save (SRAM) and all 8 save states for '${rom.effectiveTitle}'. Your original ROM file will NOT be deleted.",
+                    color = EmulatorColors.TextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteAllSaves(rom)
+                        deletingSavesFor = null
+                    },
+                ) {
+                    Text("Delete Saves", color = EmulatorColors.ErrorRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingSavesFor = null }) {
+                    Text("Cancel", color = EmulatorColors.TextSecondary)
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ShelfGameCard(
+    rom: RomRecord,
+    onPlay: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onRename: () -> Unit,
+    onPickCover: () -> Unit,
+    onExportSram: () -> Unit,
+    onImportSram: () -> Unit,
+    onRelink: () -> Unit,
+    onRemoveFromLibrary: () -> Unit,
+    onDeleteSaves: () -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    val coverBitmap = rememberCoverBitmap(rom.coverUri)
+    val accent = systemAccentColor(rom.system)
+
+    Box(
+        modifier = Modifier
+            .width(134.dp)
+            .height(176.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                Brush.verticalGradient(listOf(accent, accent.copy(alpha = 0.72f), Color(0xFF1A1026))),
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
+            .clickable(onClick = onPlay),
+    ) {
+        if (coverBitmap != null) {
+            Image(
+                bitmap = coverBitmap,
+                contentDescription = rom.effectiveTitle,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f)),
+                        ),
+                    ),
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Filled.SportsEsports,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.9f),
+                modifier = Modifier
+                    .size(54.dp)
+                    .align(Alignment.Center)
+                    .padding(bottom = 14.dp),
+            )
+        }
+
+        // Top badges & menu button
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(6.dp)
+                .align(Alignment.TopCenter),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (rom.isFavorite) {
+                    Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = "Favorite",
+                        tint = Color(0xFFFFD54F),
                         modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = Color(0xFF041423),
+                    )
+                }
+                if (!rom.sourceAvailable) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = "Missing ROM source",
+                        tint = EmulatorColors.WarningAmber,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.35f)),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "Game options for ${rom.effectiveTitle}",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                GameOptionsDropdown(
+                    expanded = menuExpanded,
+                    rom = rom,
+                    onDismiss = { menuExpanded = false },
+                    onToggleFavorite = onToggleFavorite,
+                    onRename = onRename,
+                    onPickCover = onPickCover,
+                    onExportSram = onExportSram,
+                    onImportSram = onImportSram,
+                    onRelink = onRelink,
+                    onRemoveFromLibrary = onRemoveFromLibrary,
+                    onDeleteSaves = onDeleteSaves,
+                )
+            }
+        }
+
+        // Title footer
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(10.dp),
+        ) {
+            Text(
+                text = rom.effectiveTitle,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (rom.hasBatterySave) {
+                Text(
+                    text = "SRAM saved",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = EmulatorColors.AccentCyan,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryListRowCard(
+    rom: RomRecord,
+    onPlay: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onRename: () -> Unit,
+    onPickCover: () -> Unit,
+    onExportSram: () -> Unit,
+    onImportSram: () -> Unit,
+    onRelink: () -> Unit,
+    onRemoveFromLibrary: () -> Unit,
+    onDeleteSaves: () -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    val coverBitmap = rememberCoverBitmap(rom.coverUri)
+    val accent = systemAccentColor(rom.system)
+
+    Surface(
+        color = EmulatorColors.CardSurface,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(14.dp))
+            .clickable(onClick = onPlay),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(12.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(accent),
+            ) {
+                if (coverBitmap != null) {
+                    Image(
+                        bitmap = coverBitmap,
+                        contentDescription = rom.effectiveTitle,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
                     )
                 } else {
                     Text(
-                        text = stringResource(R.string.action_open_rom),
-                        fontWeight = FontWeight.SemiBold,
+                        text = rom.system.shortLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
                     )
                 }
             }
-        }
-    }
-}
 
-@Composable
-private fun StatusBannerCard(
-    message: String,
-    isError: Boolean,
-    relinkTarget: RomRecord?,
-    onRelink: (RomRecord) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val accent = if (isError) EmulatorColors.DangerRed else EmulatorColors.SuccessGreen
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = accent.copy(alpha = 0.14f),
-        ),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.5f)),
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                if (isError) {
-                    Icon(
-                        imageVector = Icons.Filled.Warning,
-                        contentDescription = null,
-                        tint = accent,
-                        modifier = Modifier
-                            .padding(top = 2.dp, end = 8.dp)
-                            .size(18.dp),
-                    )
+            Spacer(Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = rom.effectiveTitle,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = EmulatorColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                val metaParts = buildList {
+                    add(rom.system.displayName)
+                    if (rom.hasBatterySave) add("SRAM")
+                    if (!rom.sourceAvailable) add("Missing source")
+                    if (rom.totalPlayTimeMs >= 60_000L) {
+                        add("${rom.totalPlayTimeMs / 60_000L}m played")
+                    }
                 }
                 Text(
-                    text = message,
+                    text = metaParts.joinToString(" • "),
                     style = MaterialTheme.typography.bodySmall,
-                    color = EmulatorColors.TextPrimary,
-                    modifier = Modifier.weight(1f),
+                    color = if (!rom.sourceAvailable) EmulatorColors.WarningAmber else EmulatorColors.TextSecondary,
                 )
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.size(28.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Dismiss message",
-                        tint = EmulatorColors.TextSecondary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
             }
-            if (relinkTarget != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { onRelink(relinkTarget) },
-                    border = BorderStroke(1.dp, EmulatorColors.AccentBlue),
-                ) {
-                    Text(
-                        text = stringResource(R.string.action_relink_rom),
-                        color = EmulatorColors.AccentBlue,
+
+            IconButton(onClick = onToggleFavorite) {
+                Icon(
+                    imageVector = if (rom.isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+                    contentDescription = if (rom.isFavorite) "Remove favorite" else "Add favorite",
+                    tint = if (rom.isFavorite) Color(0xFFFFD54F) else EmulatorColors.TextSecondary,
+                )
+            }
+
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "Options for ${rom.effectiveTitle}",
+                        tint = EmulatorColors.TextSecondary,
                     )
                 }
+                GameOptionsDropdown(
+                    expanded = menuExpanded,
+                    rom = rom,
+                    onDismiss = { menuExpanded = false },
+                    onToggleFavorite = onToggleFavorite,
+                    onRename = onRename,
+                    onPickCover = onPickCover,
+                    onExportSram = onExportSram,
+                    onImportSram = onImportSram,
+                    onRelink = onRelink,
+                    onRemoveFromLibrary = onRemoveFromLibrary,
+                    onDeleteSaves = onDeleteSaves,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun EmptyLibraryCard(onOpenRomClick: () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = EmulatorColors.DarkSurface),
-        border = BorderStroke(1.dp, EmulatorColors.DarkBorder),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth(),
+private fun GameOptionsDropdown(
+    expanded: Boolean,
+    rom: RomRecord,
+    onDismiss: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onRename: () -> Unit,
+    onPickCover: () -> Unit,
+    onExportSram: () -> Unit,
+    onImportSram: () -> Unit,
+    onRelink: () -> Unit,
+    onRemoveFromLibrary: () -> Unit,
+    onDeleteSaves: () -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        containerColor = EmulatorColors.DialogBackground,
+    ) {
+        DropdownMenuItem(
+            text = { Text(if (rom.isFavorite) "Remove Favorite" else "Add to Favorites", color = EmulatorColors.TextPrimary) },
+            leadingIcon = { Icon(Icons.Filled.Star, null, tint = Color(0xFFFFD54F)) },
+            onClick = {
+                onDismiss()
+                onToggleFavorite()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Rename", color = EmulatorColors.TextPrimary) },
+            leadingIcon = { Icon(Icons.Filled.Edit, null, tint = EmulatorColors.TextSecondary) },
+            onClick = {
+                onDismiss()
+                onRename()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Set Cover Image", color = EmulatorColors.TextPrimary) },
+            leadingIcon = { Icon(Icons.Filled.Photo, null, tint = EmulatorColors.TextSecondary) },
+            onClick = {
+                onDismiss()
+                onPickCover()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Export Battery Save (.sav)", color = EmulatorColors.TextPrimary) },
+            leadingIcon = { Icon(Icons.Filled.FileUpload, null, tint = EmulatorColors.AccentCyan) },
+            onClick = {
+                onDismiss()
+                onExportSram()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Import Battery Save (.sav)", color = EmulatorColors.TextPrimary) },
+            leadingIcon = { Icon(Icons.Filled.FileDownload, null, tint = EmulatorColors.AccentCyan) },
+            onClick = {
+                onDismiss()
+                onImportSram()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Relink ROM File", color = EmulatorColors.TextPrimary) },
+            leadingIcon = { Icon(Icons.Filled.Link, null, tint = EmulatorColors.TextSecondary) },
+            onClick = {
+                onDismiss()
+                onRelink()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Remove from Library", color = EmulatorColors.TextSecondary) },
+            leadingIcon = { Icon(Icons.Filled.Close, null, tint = EmulatorColors.TextSecondary) },
+            onClick = {
+                onDismiss()
+                onRemoveFromLibrary()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Delete All Saves", color = EmulatorColors.ErrorRed) },
+            leadingIcon = { Icon(Icons.Filled.DeleteForever, null, tint = EmulatorColors.ErrorRed) },
+            onClick = {
+                onDismiss()
+                onDeleteSaves()
+            },
+        )
+    }
+}
+
+@Composable
+private fun EmptyLibraryCard(
+    onPickFolder: () -> Unit,
+    onImportSingleRom: () -> Unit,
+) {
+    Surface(
+        color = EmulatorColors.CardSurface,
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(18.dp)),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(24.dp),
         ) {
             Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(EmulatorColors.AccentBlueContainer),
                 contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(EmulatorColors.AccentBlue.copy(alpha = 0.16f)),
             ) {
                 Icon(
                     imageVector = Icons.Filled.SportsEsports,
@@ -360,238 +910,113 @@ private fun EmptyLibraryCard(onOpenRomClick: () -> Unit) {
                     modifier = Modifier.size(34.dp),
                 )
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
             Text(
-                text = stringResource(R.string.empty_library_title),
+                text = "Your game library is empty",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
                 color = EmulatorColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
-                text = stringResource(R.string.empty_library_body),
-                style = MaterialTheme.typography.bodyMedium,
+                text = "Select a folder containing your legally obtained .gba, .gbc, or .gb ROMs, or open a single ROM file directly via Android Storage Access Framework.",
+                style = MaterialTheme.typography.bodySmall,
                 color = EmulatorColors.TextSecondary,
             )
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(Modifier.height(18.dp))
             Button(
-                onClick = onOpenRomClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = EmulatorColors.AccentBlue,
-                    contentColor = Color(0xFF041423),
-                ),
+                onClick = onPickFolder,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = EmulatorColors.AccentBlue),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Icon(
-                    imageVector = Icons.Filled.FolderOpen,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.action_open_rom),
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Icon(Icons.Filled.Folder, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Select Game Folder")
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onImportSingleRom) {
+                Text("Open Single ROM File", color = EmulatorColors.AccentCyan)
             }
         }
     }
 }
 
 @Composable
-private fun SystemSectionHeader(system: GameSystem, count: Int) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 2.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(system.accentColor()),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = system.shortLabel,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color.White,
-            )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(
-            text = system.displayName,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = EmulatorColors.TextPrimary,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = "$count",
-            style = MaterialTheme.typography.labelMedium,
-            color = EmulatorColors.TextSecondary,
-        )
-    }
-}
-
-@Composable
-private fun RecentRomCard(
-    record: RomRecord,
-    onLaunch: () -> Unit,
-    onRelink: () -> Unit,
-    onExportSram: () -> Unit,
-    onImportSram: () -> Unit,
-    onRemove: () -> Unit,
+private fun StatusCard(
+    message: String,
+    isError: Boolean,
+    actionLabel: String?,
+    onAction: (() -> Unit)?,
+    onDismiss: () -> Unit,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    val badgeColor = record.system.accentColor()
-    val formattedDate = remember(record.lastPlayedEpochMs) {
-        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-            .format(Date(record.lastPlayedEpochMs))
-    }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = EmulatorColors.DarkSurface),
-        border = BorderStroke(1.dp, EmulatorColors.DarkBorder),
-        shape = RoundedCornerShape(14.dp),
+    Surface(
+        color = if (isError) EmulatorColors.ErrorRed.copy(alpha = 0.15f) else EmulatorColors.AccentBlue.copy(alpha = 0.15f),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = if (record.sourceAvailable) onLaunch else onRelink),
+            .border(
+                1.dp,
+                if (isError) EmulatorColors.ErrorRed.copy(alpha = 0.45f) else EmulatorColors.AccentBlue.copy(alpha = 0.45f),
+                RoundedCornerShape(12.dp),
+            ),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
-            // Neutral system-specific placeholder tile (zero copyrighted box art)
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(badgeColor, badgeColor.copy(alpha = 0.65f)),
-                        ),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = EmulatorColors.TextPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            if (actionLabel != null && onAction != null) {
+                TextButton(onClick = onAction) {
+                    Text(actionLabel, color = EmulatorColors.AccentCyan)
+                }
+            }
+            IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                 Icon(
-                    imageVector = Icons.Filled.SportsEsports,
-                    contentDescription = record.system.displayName,
-                    tint = Color.White,
-                    modifier = Modifier.size(28.dp),
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Dismiss notice",
+                    tint = EmulatorColors.TextSecondary,
+                    modifier = Modifier.size(16.dp),
                 )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = record.displayTitle,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = EmulatorColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = formatFileSize(record.fileSizeBytes),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = EmulatorColors.TextSecondary,
-                    )
-                    Text(
-                        text = formattedDate,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = EmulatorColors.TextSecondary,
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (record.hasBatterySave) {
-                        StatusChip(label = "SRAM Saved", color = EmulatorColors.SuccessGreen)
-                    }
-                    if (!record.sourceAvailable) {
-                        StatusChip(label = "Relink Needed", color = EmulatorColors.DangerRed)
-                    }
-                }
-            }
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "Options for ${record.displayTitle}",
-                        tint = EmulatorColors.TextSecondary,
-                    )
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false },
-                    containerColor = EmulatorColors.DarkSurfaceElevated,
-                ) {
-                    if (record.hasBatterySave) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.action_export_sram)) },
-                            onClick = {
-                                menuExpanded = false
-                                onExportSram()
-                            },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.action_import_sram)) },
-                        onClick = {
-                            menuExpanded = false
-                            onImportSram()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.action_relink_rom)) },
-                        onClick = {
-                            menuExpanded = false
-                            onRelink()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = stringResource(R.string.action_remove_recent),
-                                color = EmulatorColors.DangerRed,
-                            )
-                        },
-                        onClick = {
-                            menuExpanded = false
-                            onRemove()
-                        },
-                    )
-                }
             }
         }
     }
 }
 
 @Composable
-private fun StatusChip(label: String, color: Color) {
-    Surface(
-        color = color.copy(alpha = 0.16f),
-        shape = RoundedCornerShape(6.dp),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-        )
+private fun rememberCoverBitmap(uriString: String?): ImageBitmap? {
+    val context = LocalContext.current
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = uriString) {
+        value = if (uriString.isNullOrBlank()) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val uri = Uri.parse(uriString)
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    context.contentResolver.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, bounds)
+                    }
+                    val maxDim = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
+                    val sampleSize = (maxDim / 384).coerceAtLeast(1)
+                    val opts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                    context.contentResolver.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, opts)?.asImageBitmap()
+                    }
+                }.getOrNull()
+            }
+        }
     }
+    return bitmap
 }
 
-private fun formatFileSize(bytes: Long): String {
-    return when {
-        bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
-        bytes >= 1024L -> "%d KB".format(bytes / 1024L)
-        else -> "$bytes B"
-    }
+private fun systemAccentColor(system: GameSystem): Color = when (system) {
+    GameSystem.GBA -> Color(0xFFE91E78)
+    GameSystem.GBC -> Color(0xFF7B42F6)
+    GameSystem.GB -> Color(0xFF1AA782)
 }

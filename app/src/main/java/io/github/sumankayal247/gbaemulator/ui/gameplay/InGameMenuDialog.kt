@@ -6,21 +6,23 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -29,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,48 +42,46 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import io.github.sumankayal247.gbaemulator.domain.model.OrientationLock
 import io.github.sumankayal247.gbaemulator.domain.model.ScalingMode
 import io.github.sumankayal247.gbaemulator.ui.theme.EmulatorColors
 
 /**
- * In-game pause modal inspired by reference 06-game-menu.jpg.
- * Exposes ONLY verified, working P1/P2 capabilities — zero non-functional rows (AGENTS.md).
+ * Full working in-game pause menu inspired by `06-game-menu.jpg`.
+ * Exposes Save State, Load State, Battery Save (SRAM) flush, Quit, Restart, Mute, Speed up,
+ * Lock orientation, Video scaling, dynamic Core Options, and per-game Cheat Codes.
+ * Intentionally omits unverified hardware Tilt Sensor controls (Plan §5.H).
  */
 @Composable
 fun InGameMenuDialog(
     gameTitle: String,
     muted: Boolean,
     fastForward: Boolean,
+    orientationLocked: Boolean,
     scalingMode: ScalingMode,
-    orientationLock: OrientationLock,
-    onResume: () -> Unit,
-    onSaveSram: () -> Unit,
-    onExportSram: () -> Unit,
+    coreVersion: String,
+    onOpenSaveStates: () -> Unit,
+    onOpenLoadStates: () -> Unit,
+    onOpenCoreOptions: () -> Unit,
+    onOpenCheats: () -> Unit,
+    onFlushBatterySave: () -> Unit,
     onRestartConfirmed: () -> Unit,
     onQuitConfirmed: () -> Unit,
     onToggleMute: (Boolean) -> Unit,
     onToggleFastForward: (Boolean) -> Unit,
+    onToggleOrientationLock: (Boolean) -> Unit,
     onToggleScalingMode: () -> Unit,
-    onCycleOrientationLock: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    var confirmRestart by remember { mutableStateOf(false) }
-    var confirmQuit by remember { mutableStateOf(false) }
+    var confirmAction by remember { mutableStateOf<String?>(null) }
 
-    Dialog(
-        onDismissRequest = onResume,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
+    Dialog(onDismissRequest = onDismiss) {
         Surface(
-            color = EmulatorColors.DarkSurface,
             shape = RoundedCornerShape(20.dp),
-            modifier = Modifier
-                .fillMaxWidth(0.88f)
-                .padding(vertical = 24.dp),
+            color = EmulatorColors.DialogBackground,
+            tonalElevation = 8.dp,
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Column(
                 modifier = Modifier
@@ -88,25 +89,26 @@ fun InGameMenuDialog(
                     .padding(vertical = 12.dp),
             ) {
                 Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Game menu",
                             style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
                             color = EmulatorColors.TextPrimary,
                         )
                         Text(
                             text = gameTitle,
                             style = MaterialTheme.typography.bodySmall,
                             color = EmulatorColors.TextSecondary,
+                            maxLines = 1,
                         )
                     }
-                    IconButton(onClick = onResume) {
+                    IconButton(onClick = onDismiss) {
                         Icon(
                             imageVector = Icons.Filled.Close,
                             contentDescription = "Resume game",
@@ -115,36 +117,41 @@ fun InGameMenuDialog(
                     }
                 }
 
-                HorizontalDivider(color = EmulatorColors.DarkBorder)
+                HorizontalDivider(color = EmulatorColors.CardBorder)
 
                 MenuActionRow(
-                    icon = Icons.Filled.PlayArrow,
-                    label = "Resume",
-                    onClick = onResume,
+                    icon = Icons.Filled.FileDownload,
+                    label = "Save",
+                    subtitle = "8 save-state slots",
+                    onClick = onOpenSaveStates,
+                )
+                MenuActionRow(
+                    icon = Icons.Filled.FileUpload,
+                    label = "Load",
+                    subtitle = "Restore saved snapshot",
+                    onClick = onOpenLoadStates,
                 )
                 MenuActionRow(
                     icon = Icons.Filled.Save,
-                    label = "Save SRAM Now",
-                    onClick = onSaveSram,
+                    label = "Save Battery (SRAM)",
+                    subtitle = "Flush in-game save to disk now",
+                    onClick = onFlushBatterySave,
                 )
                 MenuActionRow(
-                    icon = Icons.Filled.FileDownload,
-                    label = "Export Save (.sav)",
-                    onClick = onExportSram,
+                    icon = Icons.Filled.Close,
+                    label = "Quit",
+                    subtitle = "Save battery progress & return to library",
+                    onClick = { confirmAction = "quit" },
                 )
                 MenuActionRow(
                     icon = Icons.Filled.Refresh,
                     label = "Restart",
-                    onClick = { confirmRestart = true },
-                )
-                MenuActionRow(
-                    icon = Icons.Filled.Close,
-                    label = "Quit to Library",
-                    onClick = { confirmQuit = true },
+                    subtitle = "Reset the emulated console",
+                    onClick = { confirmAction = "restart" },
                 )
 
                 HorizontalDivider(
-                    color = EmulatorColors.DarkBorder,
+                    color = EmulatorColors.CardBorder,
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
 
@@ -156,69 +163,103 @@ fun InGameMenuDialog(
                 )
                 MenuToggleRow(
                     icon = Icons.Filled.FastForward,
-                    label = "Speed up (2x)",
+                    label = "Speed up",
                     checked = fastForward,
                     onCheckedChange = onToggleFastForward,
                 )
-                MenuValueRow(
+                MenuToggleRow(
+                    icon = Icons.Filled.ScreenRotation,
+                    label = "Lock orientation",
+                    checked = orientationLocked,
+                    onCheckedChange = onToggleOrientationLock,
+                )
+                MenuActionRow(
                     icon = Icons.Filled.AspectRatio,
-                    label = "Display scaling",
-                    value = scalingMode.label,
+                    label = "Scaling: ${scalingMode.label}",
+                    subtitle = "Tap to switch Aspect Fit / Integer Scale",
                     onClick = onToggleScalingMode,
                 )
-                MenuValueRow(
-                    icon = Icons.Filled.ScreenRotation,
-                    label = "Orientation",
-                    value = orientationLock.label,
-                    onClick = onCycleOrientationLock,
+
+                HorizontalDivider(
+                    color = EmulatorColors.CardBorder,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+
+                MenuActionRow(
+                    icon = Icons.Filled.Tune,
+                    label = "Core Options",
+                    subtitle = "Dynamic mGBA video, audio & system options",
+                    onClick = onOpenCoreOptions,
+                )
+                MenuActionRow(
+                    icon = Icons.Filled.BugReport,
+                    label = "Cheat",
+                    subtitle = "Manage per-game cheat codes",
+                    onClick = onOpenCheats,
+                )
+
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Core: $coreVersion",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = EmulatorColors.TextMuted,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                 )
             }
         }
     }
 
-    if (confirmRestart) {
+    if (confirmAction == "restart") {
         AlertDialog(
-            onDismissRequest = { confirmRestart = false },
-            containerColor = EmulatorColors.DarkSurfaceElevated,
-            title = { Text("Restart game?") },
-            text = { Text("Your battery save (SRAM) will be flushed first, but unsaved in-game progress will be reset.") },
+            onDismissRequest = { confirmAction = null },
+            containerColor = EmulatorColors.DialogBackground,
+            title = { Text("Restart game?", color = EmulatorColors.TextPrimary) },
+            text = {
+                Text(
+                    "Any unsaved progress since your last in-game save or save state will be lost. Battery SRAM will be flushed first.",
+                    color = EmulatorColors.TextSecondary,
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        confirmRestart = false
+                        confirmAction = null
                         onRestartConfirmed()
                     },
                 ) {
-                    Text("Restart", color = EmulatorColors.DangerRed)
+                    Text("Restart", color = EmulatorColors.AccentCyan)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmRestart = false }) {
-                    Text("Cancel")
+                TextButton(onClick = { confirmAction = null }) {
+                    Text("Cancel", color = EmulatorColors.TextSecondary)
                 }
             },
         )
-    }
-
-    if (confirmQuit) {
+    } else if (confirmAction == "quit") {
         AlertDialog(
-            onDismissRequest = { confirmQuit = false },
-            containerColor = EmulatorColors.DarkSurfaceElevated,
-            title = { Text("Quit to Library?") },
-            text = { Text("Battery save (SRAM) will be written safely before unloading the emulator.") },
+            onDismissRequest = { confirmAction = null },
+            containerColor = EmulatorColors.DialogBackground,
+            title = { Text("Quit to library?", color = EmulatorColors.TextPrimary) },
+            text = {
+                Text(
+                    "Your battery save (SRAM) will be flushed safely before shutting down the emulator.",
+                    color = EmulatorColors.TextSecondary,
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        confirmQuit = false
+                        confirmAction = null
                         onQuitConfirmed()
                     },
                 ) {
-                    Text("Quit", color = EmulatorColors.DangerRed)
+                    Text("Quit", color = EmulatorColors.ErrorRed)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmQuit = false }) {
-                    Text("Cancel")
+                TextButton(onClick = { confirmAction = null }) {
+                    Text("Cancel", color = EmulatorColors.TextSecondary)
                 }
             },
         )
@@ -229,6 +270,7 @@ fun InGameMenuDialog(
 private fun MenuActionRow(
     icon: ImageVector,
     label: String,
+    subtitle: String? = null,
     onClick: () -> Unit,
 ) {
     Row(
@@ -236,20 +278,28 @@ private fun MenuActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .padding(horizontal = 20.dp, vertical = 12.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = EmulatorColors.TextPrimary,
-            modifier = Modifier.size(22.dp),
         )
-        Spacer(modifier = Modifier.width(16.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = EmulatorColors.TextPrimary,
-        )
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = EmulatorColors.TextPrimary,
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = EmulatorColors.TextSecondary,
+                )
+            }
+        }
     }
 }
 
@@ -265,59 +315,27 @@ private fun MenuToggleRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 20.dp, vertical = 10.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = EmulatorColors.TextPrimary,
-            modifier = Modifier.size(22.dp),
         )
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(Modifier.width(16.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
             color = EmulatorColors.TextPrimary,
             modifier = Modifier.weight(1f),
         )
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
-@Composable
-private fun MenuValueRow(
-    icon: ImageVector,
-    label: String,
-    value: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = EmulatorColors.TextPrimary,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = EmulatorColors.TextPrimary,
-            )
-        }
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = EmulatorColors.AccentBlue,
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = EmulatorColors.TextPrimary,
+                checkedTrackColor = EmulatorColors.AccentBlue,
+            ),
         )
     }
 }

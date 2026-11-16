@@ -2,3 +2,7 @@
 -keep class io.github.sumankayal247.gbaemulator.emulator.NativeEmulatorBridge {
     native <methods>;
 }
+
+# Keep Room database class names for reflective instantiation
+-keep class * extends androidx.room.RoomDatabase
+-dontwarn androidx.room.paging.**

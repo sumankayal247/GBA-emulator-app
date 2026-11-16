@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -11,12 +12,17 @@ import android.util.Log
 import android.view.Surface
 import androidx.core.content.ContextCompat
 import io.github.sumankayal247.gbaemulator.data.preferences.PreferencesRepository
+import io.github.sumankayal247.gbaemulator.data.rom.LibraryRepository
+import io.github.sumankayal247.gbaemulator.data.saves.SaveStateRepository
 import io.github.sumankayal247.gbaemulator.data.saves.SramSaveRepository
 import io.github.sumankayal247.gbaemulator.domain.model.AppResult
+import io.github.sumankayal247.gbaemulator.domain.model.CoreOptionItem
+import io.github.sumankayal247.gbaemulator.domain.model.CoreOptionsJsonParser
 import io.github.sumankayal247.gbaemulator.domain.model.EmulatorError
 import io.github.sumankayal247.gbaemulator.domain.model.EmulatorPreferences
 import io.github.sumankayal247.gbaemulator.domain.model.EmulatorState
 import io.github.sumankayal247.gbaemulator.domain.model.RomRecord
+import io.github.sumankayal247.gbaemulator.domain.model.SaveStateSlot
 import io.github.sumankayal247.gbaemulator.domain.model.ScalingMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 data class EmulatorSessionSnapshot(
@@ -42,23 +49,26 @@ data class EmulatorSessionSnapshot(
     val muted: Boolean = false,
     val audioVolume: Float = 1.0f,
     val scalingMode: ScalingMode = ScalingMode.ASPECT_FIT,
+    val coreOptions: List<CoreOptionItem> = emptyList(),
     val errorMessage: String? = null,
     val statusNotice: String? = null,
 )
 
 /**
- * Single-owner emulator session manager scoped to the Application lifecycle (ADR-0003).
+ * Single-owner emulator session manager scoped to the Application lifecycle (ADR-0003 / ADR-0005).
  *
  * Guarantees:
  * - Only one native core instance runs at any time.
  * - Survives Activity configuration changes and SurfaceView recreation.
- * - Serializes all lifecycle & save operations off the main thread.
- * - Handles Android AudioFocus, headphone disconnects (`ACTION_AUDIO_BECOMING_NOISY`),
- *   input release on pause, and atomic periodic + lifecycle SRAM flushing.
+ * - Serializes all lifecycle, save-state, SRAM, cheat, and core-option operations off the main thread.
+ * - Handles AudioFocus, headphone disconnects (`ACTION_AUDIO_BECOMING_NOISY`), input release on
+ *   pause, play-time accumulation, and atomic periodic + lifecycle SRAM flushing.
  */
 class EmulatorSession(
     private val context: Context,
     private val sramSaveRepository: SramSaveRepository,
+    private val saveStateRepository: SaveStateRepository,
+    private val libraryRepository: LibraryRepository,
     private val preferencesRepository: PreferencesRepository,
 ) {
     private val logTag = "EmulatorSession"
@@ -77,6 +87,7 @@ class EmulatorSession(
     private var pausedByAudioFocus = false
     private var userMuted = false
     private var userVolume = 1.0f
+    private var runningSegmentStartMs: Long = 0L
 
     private val noisyAudioReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -121,7 +132,6 @@ class EmulatorSession(
         preferences: EmulatorPreferences,
     ): AppResult<Unit> = withContext(Dispatchers.IO) {
         lifecycleMutex.withLock {
-            // Cleanly flush and shut down any previously active ROM before starting another.
             if (_snapshot.value.state != EmulatorState.UNLOADED) {
                 shutdownInternalLocked()
             }
@@ -142,7 +152,6 @@ class EmulatorSession(
                 )
             }
 
-            // Load persisted battery SRAM if present (with automatic .bak corruption recovery).
             var initialSram: ByteArray? = null
             var recoveryNotice: String? = null
             when (val loadRes = sramSaveRepository.readSram(record.system, record.sha256)) {
@@ -155,25 +164,29 @@ class EmulatorSession(
                 }
             }
 
+            // Load persisted global + per-ROM dynamic core option overrides before boot.
+            val savedOptions = libraryRepository.getEffectiveCoreOptions(record.romId)
+            val optionKeys = savedOptions.keys.toTypedArray().takeIf { it.isNotEmpty() }
+            val optionValues = savedOptions.values.toTypedArray().takeIf { it.isNotEmpty() }
+
             val corePath = resolveCoreLibraryPath()
-            val systemDir = File(context.filesDir, "bios").apply { mkdirs() }
+            val systemDir = File(context.filesDir, "system").apply { mkdirs() }
             val saveDir = sramSaveRepository.romSaveDir(record.system, record.sha256).apply { mkdirs() }
 
             val loadError = try {
-                bridge.nativeSetScalingMode(preferences.scalingMode.nativeValue)
-                bridge.nativeSetAudioMuted(preferences.muted)
-                bridge.nativeSetAudioVolume(preferences.audioVolume)
-                bridge.nativeSetFastForward(false)
                 bridge.nativeLoadRom(
                     corePath = corePath,
                     romPath = stagedRomFile.absolutePath,
                     systemDir = systemDir.absolutePath,
                     saveDir = saveDir.absolutePath,
                     initialSram = initialSram,
+                    initialOptionKeys = optionKeys,
+                    initialOptionValues = optionValues,
                     startPaused = false,
                 )
             } catch (t: Throwable) {
-                "Native core initialization failed: ${t.message ?: t::class.java.simpleName}"
+                Log.e(logTag, "Native library failure during loadRom", t)
+                "Native emulator initialization failed: ${t.message ?: t.javaClass.simpleName}"
             }
 
             if (loadError != null) {
@@ -186,92 +199,203 @@ class EmulatorSession(
                 return@withLock AppResult.Failure(EmulatorError.CoreInitFailure(loadError))
             }
 
-            val coreVersion = runCatching { bridge.nativeGetCoreVersion() }.getOrDefault("mGBA")
-            val updatedRecord = record.copy(
-                lastPlayedEpochMs = System.currentTimeMillis(),
-                hasBatterySave = initialSram != null || sramSaveRepository.hasSave(record),
-            )
-            preferencesRepository.upsertRecentGame(updatedRecord)
+            bridge.nativeSetScalingMode(preferences.scalingMode.nativeValue)
+            bridge.nativeSetAudioMuted(preferences.muted)
+            bridge.nativeSetAudioVolume(preferences.audioVolume)
+            bridge.nativeSetFastForward(false)
+
+            // Apply any enabled cheats saved for this ROM.
+            val enabledCheats = libraryRepository.getEnabledCheatCodes(record.romId)
+            if (enabledCheats.isNotEmpty()) {
+                val cheatErr = runCatching { bridge.nativeApplyCheats(enabledCheats.toTypedArray()) }.getOrNull()
+                if (cheatErr != null) {
+                    Log.w(logTag, "Some cheats failed to apply on launch: $cheatErr")
+                }
+            }
 
             requestAudioFocus()
             registerNoisyReceiver()
             startPeriodicSramFlushLocked()
 
+            val coreVersion = runCatching { bridge.nativeGetCoreVersion() }.getOrDefault("mGBA")
+            val dynamicOptions = CoreOptionsJsonParser.parse(
+                runCatching { bridge.nativeGetCoreOptionsJson() }.getOrNull(),
+            )
+            runningSegmentStartMs = System.currentTimeMillis()
+
             _snapshot.update {
                 it.copy(
                     state = EmulatorState.RUNNING,
-                    activeRom = updatedRecord,
+                    activeRom = record,
                     coreVersion = coreVersion,
+                    coreOptions = dynamicOptions,
                     errorMessage = null,
                     statusNotice = recoveryNotice,
                 )
             }
-
             AppResult.Success(Unit)
         }
     }
 
     suspend fun pauseSession(reason: String? = null) = withContext(Dispatchers.IO) {
         lifecycleMutex.withLock {
-            val cur = _snapshot.value.state
-            if (cur != EmulatorState.RUNNING) return@withLock
-            bridge.nativeReleaseAllInputs()
-            if (bridge.nativePause()) {
-                _snapshot.update {
-                    it.copy(
-                        state = EmulatorState.PAUSED,
-                        statusNotice = reason ?: it.statusNotice,
-                    )
-                }
-                flushSramInternalLocked()
+            if (_snapshot.value.state != EmulatorState.RUNNING) return@withLock
+            accumulatePlayTimeLocked()
+            runCatching {
+                bridge.nativeReleaseAllInputs()
+                bridge.nativePause()
+            }
+            flushSramInternalLocked()
+            _snapshot.update {
+                it.copy(
+                    state = EmulatorState.PAUSED,
+                    statusNotice = reason ?: it.statusNotice,
+                )
             }
         }
     }
 
     suspend fun resumeSession() = withContext(Dispatchers.IO) {
         lifecycleMutex.withLock {
-            val cur = _snapshot.value.state
-            if (cur != EmulatorState.PAUSED) return@withLock
+            if (_snapshot.value.state != EmulatorState.PAUSED) return@withLock
             requestAudioFocus()
-            if (bridge.nativeResume()) {
-                _snapshot.update {
-                    it.copy(
-                        state = EmulatorState.RUNNING,
-                        statusNotice = null,
-                    )
-                }
-            }
-        }
-    }
-
-    suspend fun restartGame(): AppResult<Unit> = withContext(Dispatchers.IO) {
-        lifecycleMutex.withLock {
-            val cur = _snapshot.value.state
-            if (cur != EmulatorState.RUNNING && cur != EmulatorState.PAUSED) {
-                return@withLock AppResult.Failure(EmulatorError.CoreInitFailure("No active game to restart."))
-            }
-            bridge.nativeReleaseAllInputs()
-            flushSramInternalLocked()
-            val ok = bridge.nativeReset()
-            if (!ok) {
-                return@withLock AppResult.Failure(EmulatorError.CoreInitFailure("Failed to reset emulator core."))
-            }
-            if (cur == EmulatorState.PAUSED) {
-                requestAudioFocus()
-                bridge.nativeResume()
+            val ok = runCatching { bridge.nativeResume() }.getOrDefault(false)
+            if (ok) {
+                runningSegmentStartMs = System.currentTimeMillis()
                 _snapshot.update { it.copy(state = EmulatorState.RUNNING) }
             }
-            AppResult.Success(Unit)
         }
     }
 
-    suspend fun flushSramNow(): AppResult<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun resetGame() = withContext(Dispatchers.IO) {
+        lifecycleMutex.withLock {
+            val st = _snapshot.value.state
+            if (st != EmulatorState.RUNNING && st != EmulatorState.PAUSED) return@withLock
+            flushSramInternalLocked()
+            runCatching {
+                bridge.nativeReleaseAllInputs()
+                bridge.nativeReset()
+            }
+            _snapshot.update { it.copy(statusNotice = "Game restarted.") }
+        }
+    }
+
+    suspend fun flushBatterySave(): AppResult<Boolean> = withContext(Dispatchers.IO) {
         lifecycleMutex.withLock {
             flushSramInternalLocked()
         }
     }
 
-    suspend fun quitSession() = withContext(Dispatchers.IO) {
+    suspend fun saveStateToSlot(slotIndex: Int): AppResult<SaveStateSlot> = withContext(Dispatchers.IO) {
+        lifecycleMutex.withLock {
+            val rom = _snapshot.value.activeRom
+                ?: return@withLock AppResult.Failure(EmulatorError.SaveStateFailure("No active game."))
+            val st = _snapshot.value.state
+            if (st != EmulatorState.RUNNING && st != EmulatorState.PAUSED) {
+                return@withLock AppResult.Failure(EmulatorError.SaveStateFailure("Game is not active."))
+            }
+
+            val bytes = runCatching { bridge.nativeSerializeState() }.getOrNull()
+                ?: return@withLock AppResult.Failure(
+                    EmulatorError.SaveStateFailure("Core failed to serialize state for slot $slotIndex."),
+                )
+
+            val thumbPng = captureThumbnailPng()
+            val coreVersion = _snapshot.value.coreVersion
+            val result = saveStateRepository.writeState(
+                system = rom.system,
+                romSha256 = rom.sha256,
+                slotIndex = slotIndex,
+                stateBytes = bytes,
+                coreVersion = coreVersion,
+                thumbnailPngBytes = thumbPng,
+            )
+            if (result is AppResult.Success) {
+                _snapshot.update { it.copy(statusNotice = "Saved State $slotIndex.") }
+            }
+            result
+        }
+    }
+
+    suspend fun loadStateFromSlot(slotIndex: Int): AppResult<String> = withContext(Dispatchers.IO) {
+        lifecycleMutex.withLock {
+            val rom = _snapshot.value.activeRom
+                ?: return@withLock AppResult.Failure(EmulatorError.SaveStateFailure("No active game."))
+            val st = _snapshot.value.state
+            if (st != EmulatorState.RUNNING && st != EmulatorState.PAUSED) {
+                return@withLock AppResult.Failure(EmulatorError.SaveStateFailure("Game is not active."))
+            }
+
+            val loaded = saveStateRepository.readState(rom.system, rom.sha256, slotIndex)
+            if (loaded is AppResult.Failure) return@withLock loaded
+            val stateData = (loaded as AppResult.Success).value
+
+            val ok = runCatching { bridge.nativeUnserializeState(stateData.bytes) }.getOrDefault(false)
+            if (!ok) {
+                return@withLock AppResult.Failure(
+                    EmulatorError.SaveStateFailure(
+                        "Could not restore State $slotIndex — it may be incompatible with ${_snapshot.value.coreVersion}.",
+                    ),
+                )
+            }
+
+            // Re-apply enabled cheats after state load so cheat toggles stay consistent.
+            val enabledCodes = libraryRepository.getEnabledCheatCodes(rom.romId)
+            runCatching { bridge.nativeApplyCheats(enabledCodes.toTypedArray()) }
+
+            val msg = buildString {
+                append("Loaded State $slotIndex.")
+                if (stateData.recoveredFromBackup) append(" (Recovered from backup.)")
+            }
+            _snapshot.update { it.copy(statusNotice = msg) }
+            AppResult.Success(msg)
+        }
+    }
+
+    suspend fun listSaveStateSlots(): List<SaveStateSlot> = withContext(Dispatchers.IO) {
+        val rom = _snapshot.value.activeRom ?: return@withContext emptyList()
+        saveStateRepository.listSlots(rom.system, rom.sha256)
+    }
+
+    suspend fun deleteSaveStateSlot(slotIndex: Int): Boolean = withContext(Dispatchers.IO) {
+        val rom = _snapshot.value.activeRom ?: return@withContext false
+        saveStateRepository.deleteSlot(rom.system, rom.sha256, slotIndex)
+    }
+
+    suspend fun setCoreOption(key: String, value: String, perGame: Boolean): Boolean =
+        withContext(Dispatchers.IO) {
+            lifecycleMutex.withLock {
+                val applied = runCatching { bridge.nativeSetCoreOption(key, value) }.getOrDefault(false)
+                if (!applied) return@withLock false
+                val rom = _snapshot.value.activeRom
+                val scopeKey = if (perGame && rom != null) rom.romId else LibraryRepository.GLOBAL_OPTION_SCOPE
+                libraryRepository.saveCoreOptionOverride(scopeKey, key, value)
+                val refreshed = CoreOptionsJsonParser.parse(
+                    runCatching { bridge.nativeGetCoreOptionsJson() }.getOrNull(),
+                )
+                _snapshot.update { it.copy(coreOptions = refreshed) }
+                true
+            }
+        }
+
+    suspend fun applyEnabledCheatsForActiveRom(): AppResult<Unit> = withContext(Dispatchers.IO) {
+        lifecycleMutex.withLock {
+            val rom = _snapshot.value.activeRom ?: return@withLock AppResult.Success(Unit)
+            val st = _snapshot.value.state
+            if (st != EmulatorState.RUNNING && st != EmulatorState.PAUSED) {
+                return@withLock AppResult.Success(Unit)
+            }
+            val enabled = libraryRepository.getEnabledCheatCodes(rom.romId)
+            val err = runCatching { bridge.nativeApplyCheats(enabled.toTypedArray()) }.getOrNull()
+            if (err != null) {
+                AppResult.Failure(EmulatorError.InvalidCheatCode(err))
+            } else {
+                AppResult.Success(Unit)
+            }
+        }
+    }
+
+    suspend fun stopSession() = withContext(Dispatchers.IO) {
         lifecycleMutex.withLock {
             shutdownInternalLocked()
         }
@@ -279,11 +403,11 @@ class EmulatorSession(
 
     fun onAppBackgrounded() {
         sessionScope.launch {
-            pauseSession()
+            pauseSession(reason = null)
         }
     }
 
-    // Surface callbacks — safe to invoke across rotations without touching core lifecycle.
+    // Surface lifecycle callbacks (thread-safe; EGL thread handles reattach without stopping core).
     fun attachSurface(surface: Surface, width: Int, height: Int) {
         runCatching { bridge.nativeAttachSurface(surface, width, height) }
     }
@@ -296,9 +420,17 @@ class EmulatorSession(
         runCatching { bridge.nativeDetachSurface() }
     }
 
-    // Lock-free real-time input / AV controls.
+    // Real-time lock-free input & A/V controls.
     fun setTouchInputMask(mask: Int) {
-        runCatching { bridge.nativeSetTouchInputMask(mask) }
+        if (_snapshot.value.state == EmulatorState.RUNNING) {
+            bridge.nativeSetTouchInputMask(mask)
+        }
+    }
+
+    fun setGamepadInputMask(mask: Int) {
+        if (_snapshot.value.state == EmulatorState.RUNNING) {
+            bridge.nativeSetGamepadInputMask(mask)
+        }
     }
 
     fun releaseAllInputs() {
@@ -335,7 +467,34 @@ class EmulatorSession(
         _snapshot.update { it.copy(statusNotice = null) }
     }
 
+    private fun captureThumbnailPng(): ByteArray? {
+        val raw = runCatching { bridge.nativeCaptureScreenshotArgb() }.getOrNull() ?: return null
+        if (raw.size < 3) return null
+        val w = raw[0]
+        val h = raw[1]
+        if (w <= 0 || h <= 0 || w > 1024 || h > 1024 || raw.size < 2 + w * h) return null
+        return runCatching {
+            val bmp = Bitmap.createBitmap(raw, 2, w, w, h, Bitmap.Config.ARGB_8888)
+            val baos = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.PNG, 90, baos)
+            bmp.recycle()
+            baos.toByteArray()
+        }.getOrNull()
+    }
+
+    private suspend fun accumulatePlayTimeLocked() {
+        val rom = _snapshot.value.activeRom ?: return
+        if (runningSegmentStartMs > 0L) {
+            val delta = (System.currentTimeMillis() - runningSegmentStartMs).coerceAtLeast(0L)
+            runningSegmentStartMs = 0L
+            if (delta > 0L) {
+                libraryRepository.recordPlayTime(rom.romId, delta)
+            }
+        }
+    }
+
     private suspend fun shutdownInternalLocked() {
+        accumulatePlayTimeLocked()
         periodicSaveJob?.cancel()
         periodicSaveJob = null
         pausedByAudioFocus = false
@@ -353,7 +512,7 @@ class EmulatorSession(
         if (activeRom != null && finalSram != null && finalSram.isNotEmpty() && !isBlankSram(finalSram)) {
             val res = sramSaveRepository.writeSram(activeRom.system, activeRom.sha256, finalSram)
             if (res is AppResult.Success) {
-                preferencesRepository.markBatterySavePresent(activeRom.romId, true)
+                libraryRepository.markBatterySavePresent(activeRom.romId, true)
             }
         }
 
@@ -369,8 +528,8 @@ class EmulatorSession(
 
     private suspend fun flushSramInternalLocked(): AppResult<Boolean> {
         val rom = _snapshot.value.activeRom ?: return AppResult.Success(false)
-        val state = _snapshot.value.state
-        if (state != EmulatorState.RUNNING && state != EmulatorState.PAUSED) {
+        val st = _snapshot.value.state
+        if (st != EmulatorState.RUNNING && st != EmulatorState.PAUSED) {
             return AppResult.Success(false)
         }
         val bytes = runCatching { bridge.nativeExtractSram() }.getOrNull()
@@ -378,12 +537,9 @@ class EmulatorSession(
             return AppResult.Success(false)
         }
         return when (val writeRes = sramSaveRepository.writeSram(rom.system, rom.sha256, bytes)) {
-            is AppResult.Failure -> {
-                _snapshot.update { it.copy(statusNotice = writeRes.error.userMessage) }
-                writeRes
-            }
+            is AppResult.Failure -> writeRes
             is AppResult.Success -> {
-                preferencesRepository.markBatterySavePresent(rom.romId, true)
+                libraryRepository.markBatterySavePresent(rom.romId, true)
                 _snapshot.update { snap ->
                     snap.copy(activeRom = snap.activeRom?.copy(hasBatterySave = true))
                 }
@@ -451,8 +607,6 @@ class EmulatorSession(
         }
     }
 
-    // mGBA initializes unformatted SRAM buffers with 0xFF (or 0x00). Avoid creating bogus save
-    // files on disk for games that never wrote battery save data.
     private fun isBlankSram(bytes: ByteArray): Boolean {
         var allFF = true
         var all00 = true

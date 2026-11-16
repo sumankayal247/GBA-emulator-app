@@ -643,6 +643,60 @@ void testSingleOwnerGuardPreventsConcurrentCores() {
     CHECK(second.shutdown(nullptr, 4000), "Second core shutdown");
 }
 
+void testCoreOptionsJsonOverridesAndScreenshotArgb() {
+    const auto tmpDir = std::filesystem::temp_directory_path() / "gba_emulator_native_tests";
+    std::filesystem::create_directories(tmpDir);
+    const auto gbaRomPath = tmpDir / "options_screenshot.gba";
+    writeFile(gbaRomPath, buildSyntheticGbaTestRom());
+
+    gba::LibretroFrontend frontend;
+    gba::LoadConfig cfg;
+    cfg.coreLibraryPath = GBA_LIBRETRO_CORE_PATH;
+    cfg.romFilePath = gbaRomPath.string();
+    cfg.startPaused = true;
+    cfg.initialCoreOptions = {
+        {"mgba_color_correction", "GBA"},
+        {"mgba_nonexistent_fake_option", "bogus"},
+    };
+
+    std::string err;
+    CHECK(frontend.loadRom(cfg, err), ("loadRom with initial options failed: " + err).c_str());
+
+    const std::string json = frontend.coreOptionsJson();
+    CHECK(json.size() > 64 && json.front() == '[' && json.back() == ']',
+          "coreOptionsJson returns non-empty JSON array");
+    CHECK(json.find("\"key\":\"mgba_color_correction\"") != std::string::npos,
+          "JSON contains real mgba_color_correction key");
+    CHECK(json.find("\"currentValue\":\"GBA\"") != std::string::npos,
+          "Boot-time initialCoreOptions override applied to mgba_color_correction");
+    CHECK(json.find("mgba_nonexistent_fake_option") == std::string::npos,
+          "Unknown fake option key is never surfaced in JSON");
+    CHECK(json.find("\"visible\":") != std::string::npos,
+          "JSON includes visibility flag from CoreOptionsStore");
+
+    CHECK(frontend.stepFrames(4), "Step 4 frames to populate video buffer");
+    uint32_t w = 0;
+    uint32_t h = 0;
+    std::vector<uint32_t> argbGbaCorrected;
+    CHECK(frontend.captureLatestFrameArgb(w, h, argbGbaCorrected), "captureLatestFrameArgb succeeded");
+    CHECK(w == 240 && h == 160 && argbGbaCorrected.size() == 240u * 160u, "Captured 240x160 ARGB8888 thumbnail");
+    const uint32_t correctedPixel = argbGbaCorrected[10];
+    const uint32_t alpha = (correctedPixel >> 24) & 0xFFu;
+    const uint32_t red = (correctedPixel >> 16) & 0xFFu;
+    const uint32_t green = (correctedPixel >> 8) & 0xFFu;
+    CHECK(alpha == 0xFFu && red >= 120u && red > green + 60u, "Captured ARGB8888 pixel is opaque reddish");
+
+    // Toggle color correction OFF live and confirm mGBA's rendered pixel brightens to uncorrected red.
+    CHECK(frontend.setCoreOption("mgba_color_correction", "OFF"), "Live core option toggle OFF succeeded");
+    CHECK(frontend.stepFrames(3), "Step frames after core option change");
+    std::vector<uint32_t> argbRaw;
+    CHECK(frontend.captureLatestFrameArgb(w, h, argbRaw), "Recapture ARGB8888 after option change");
+    const uint32_t rawRed = (argbRaw[10] >> 16) & 0xFFu;
+    CHECK(rawRed >= 240u && rawRed > red, "Live mgba_color_correction toggle changed rendered output");
+
+    CHECK(frontend.shutdown(nullptr, 4000), "Shutdown after options & screenshot test");
+}
+
 }  // namespace
 
 int main() {
@@ -657,6 +711,7 @@ int main() {
     RUN_TEST(testRealMgbaGbaBootInputVideoAudioSramAndState);
     RUN_TEST(testRealMgbaGbcAndGbBootVideoAudioAndSram);
     RUN_TEST(testSingleOwnerGuardPreventsConcurrentCores);
+    RUN_TEST(testCoreOptionsJsonOverridesAndScreenshotArgb);
 
     std::cout << "\nSummary: " << (gTestsRun - gTestsFailed) << "/" << gTestsRun << " passed, "
               << gTestsFailed << " failed.\n";

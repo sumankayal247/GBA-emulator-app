@@ -105,6 +105,7 @@ bool LibretroFrontend::loadRom(const LoadConfig& config, std::string& errorOut) 
 
     inputState_.releaseAll();
     optionsStore_.clear();
+    optionsStore_.setPendingOverrides(config.initialCoreOptions);
     videoBuffer_.clear();
     audioBuffer_.clear();
     audioBuffer_.resetStats();
@@ -417,6 +418,35 @@ bool LibretroFrontend::setCoreOption(const std::string& key, const std::string& 
     return updated;
 }
 
+bool LibretroFrontend::captureLatestFrameArgb(
+    uint32_t& outWidth,
+    uint32_t& outHeight,
+    std::vector<uint32_t>& outArgb
+) const {
+    std::vector<uint16_t> rgb565;
+    VideoFrameBuffer::FrameMetadata meta;
+    if (!videoBuffer_.consumeLatest(0, rgb565, meta) || meta.width == 0 || meta.height == 0) {
+        outWidth = 0;
+        outHeight = 0;
+        outArgb.clear();
+        return false;
+    }
+    outWidth = meta.width;
+    outHeight = meta.height;
+    outArgb.resize(rgb565.size());
+    for (size_t i = 0; i < rgb565.size(); ++i) {
+        const uint16_t p = rgb565[i];
+        const uint32_t r5 = (p >> 11) & 0x1Fu;
+        const uint32_t g6 = (p >> 5) & 0x3Fu;
+        const uint32_t b5 = p & 0x1Fu;
+        const uint32_t r8 = (r5 << 3) | (r5 >> 2);
+        const uint32_t g8 = (g6 << 2) | (g6 >> 4);
+        const uint32_t b8 = (b5 << 3) | (b5 >> 2);
+        outArgb[i] = 0xFF000000u | (r8 << 16) | (g8 << 8) | b8;
+    }
+    return true;
+}
+
 bool LibretroFrontend::shutdown(std::vector<uint8_t>* outFinalSram, uint32_t timeoutMs) {
     if (outFinalSram) {
         outFinalSram->clear();
@@ -708,6 +738,12 @@ bool LibretroFrontend::handleEnvironment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: {
             if (!data) return false;
             *static_cast<bool*>(data) = optionsStore_.consumeDirtyFlag();
+            return true;
+        }
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY: {
+            if (!data) return false;
+            const auto* disp = static_cast<const retro_core_option_display*>(data);
+            optionsStore_.setVisibility(disp->key, disp->visible);
             return true;
         }
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS: {

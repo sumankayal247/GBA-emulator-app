@@ -10,13 +10,16 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import io.github.sumankayal247.gbaemulator.domain.model.ControllerProfile
 import io.github.sumankayal247.gbaemulator.domain.model.EmulatorPreferences
 import io.github.sumankayal247.gbaemulator.domain.model.GameSystem
 import io.github.sumankayal247.gbaemulator.domain.model.OrientationLock
 import io.github.sumankayal247.gbaemulator.domain.model.RomRecord
 import io.github.sumankayal247.gbaemulator.domain.model.ScalingMode
+import io.github.sumankayal247.gbaemulator.domain.model.TouchLayoutProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 import java.net.URLDecoder
@@ -27,9 +30,8 @@ private val Context.emulatorDataStore: DataStore<Preferences> by preferencesData
 )
 
 /**
- * Pure Kotlin, versioned serialization codec for recent ROM metadata stored in DataStore
- * (unit-testable on JVM without Android JSON stubs).
- * Replaced by versioned Room database in milestone P3.
+ * Pure Kotlin, versioned serialization codec for recent ROM metadata (kept for backwards
+ * compatibility and migration into the Room library database).
  */
 object RecentGamesCodec {
     private const val HEADER_PREFIX = "v1\n"
@@ -92,6 +94,34 @@ object RecentGamesCodec {
     private fun dec(value: String): String = runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
 }
 
+/**
+ * Pure Kotlin codec for persisted per-controller button mapping profiles.
+ */
+object ControllerProfilesCodec {
+    private const val HEADER_PREFIX = "ctrl_v1\n"
+
+    fun encode(profiles: Map<String, ControllerProfile>): String = buildString {
+        append(HEADER_PREFIX)
+        profiles.values.sortedBy { it.displayName.lowercase() }.forEach { profile ->
+            append(profile.serialize()).append('\n')
+        }
+    }
+
+    fun decode(raw: String?): Map<String, ControllerProfile> {
+        if (raw.isNullOrBlank() || !raw.startsWith(HEADER_PREFIX)) return emptyMap()
+        val out = LinkedHashMap<String, ControllerProfile>()
+        raw.removePrefix(HEADER_PREFIX).split('\n').forEach { line ->
+            if (line.isNotBlank()) {
+                val parsed = ControllerProfile.deserialize(line)
+                if (parsed != null) {
+                    out[parsed.descriptor] = parsed
+                }
+            }
+        }
+        return out
+    }
+}
+
 class PreferencesRepository(private val context: Context) {
 
     private object Keys {
@@ -101,6 +131,12 @@ class PreferencesRepository(private val context: Context) {
         val ORIENTATION_LOCK = stringPreferencesKey("orientation_lock")
         val CONTROLS_OPACITY = floatPreferencesKey("controls_opacity")
         val CONTROLS_SCALE = floatPreferencesKey("controls_scale")
+        val HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
+        val AUTO_HIDE_TOUCH_CONTROLLER = booleanPreferencesKey("auto_hide_touch_controller")
+        val REDUCED_MOTION = booleanPreferencesKey("reduced_motion")
+        val PORTRAIT_LAYOUT = stringPreferencesKey("portrait_layout_v1")
+        val LANDSCAPE_LAYOUT = stringPreferencesKey("landscape_layout_v1")
+        val CONTROLLER_PROFILES = stringPreferencesKey("controller_profiles_v1")
         val RECENT_GAMES = stringPreferencesKey("recent_games_v1")
     }
 
@@ -109,13 +145,22 @@ class PreferencesRepository(private val context: Context) {
             if (ex is IOException) emit(emptyPreferences()) else throw ex
         }
         .map { prefs ->
+            val legacyOpacity = (prefs[Keys.CONTROLS_OPACITY] ?: 0.92f).coerceIn(0.35f, 1.0f)
+            val legacyScale = (prefs[Keys.CONTROLS_SCALE] ?: 1.0f).coerceIn(0.75f, 1.30f)
+            val portrait = TouchLayoutProfile.deserialize(prefs[Keys.PORTRAIT_LAYOUT], landscape = false)
+            val landscape = TouchLayoutProfile.deserialize(prefs[Keys.LANDSCAPE_LAYOUT], landscape = true)
             EmulatorPreferences(
                 scalingMode = ScalingMode.fromNative(prefs[Keys.SCALING_MODE] ?: ScalingMode.ASPECT_FIT.nativeValue),
                 muted = prefs[Keys.MUTED] ?: false,
                 audioVolume = (prefs[Keys.AUDIO_VOLUME] ?: 1.0f).coerceIn(0f, 1f),
                 orientationLock = OrientationLock.fromId(prefs[Keys.ORIENTATION_LOCK] ?: OrientationLock.AUTO.id),
-                controlsOpacity = (prefs[Keys.CONTROLS_OPACITY] ?: 0.92f).coerceIn(0.35f, 1.0f),
-                controlsScale = (prefs[Keys.CONTROLS_SCALE] ?: 1.0f).coerceIn(0.8f, 1.25f),
+                controlsOpacity = legacyOpacity,
+                controlsScale = legacyScale,
+                hapticsEnabled = prefs[Keys.HAPTICS_ENABLED] ?: true,
+                autoHideTouchWithController = prefs[Keys.AUTO_HIDE_TOUCH_CONTROLLER] ?: true,
+                reducedMotion = prefs[Keys.REDUCED_MOTION] ?: false,
+                portraitLayout = portrait,
+                landscapeLayout = landscape,
             )
         }
 
@@ -126,6 +171,20 @@ class PreferencesRepository(private val context: Context) {
         .map { prefs ->
             RecentGamesCodec.decode(prefs[Keys.RECENT_GAMES])
         }
+
+    val controllerProfilesFlow: Flow<Map<String, ControllerProfile>> = context.emulatorDataStore.data
+        .catch { ex ->
+            if (ex is IOException) emit(emptyPreferences()) else throw ex
+        }
+        .map { prefs ->
+            ControllerProfilesCodec.decode(prefs[Keys.CONTROLLER_PROFILES])
+        }
+
+    suspend fun getLegacyRecentGamesOnce(): List<RomRecord> = recentGamesFlow.first()
+
+    suspend fun clearLegacyRecentGames() {
+        context.emulatorDataStore.edit { it.remove(Keys.RECENT_GAMES) }
+    }
 
     suspend fun updateScalingMode(mode: ScalingMode) {
         context.emulatorDataStore.edit { it[Keys.SCALING_MODE] = mode.nativeValue }
@@ -144,11 +203,73 @@ class PreferencesRepository(private val context: Context) {
     }
 
     suspend fun updateControlsOpacity(opacity: Float) {
-        context.emulatorDataStore.edit { it[Keys.CONTROLS_OPACITY] = opacity.coerceIn(0.35f, 1.0f) }
+        val clamped = opacity.coerceIn(0.35f, 1.0f)
+        context.emulatorDataStore.edit { prefs ->
+            prefs[Keys.CONTROLS_OPACITY] = clamped
+            val p = TouchLayoutProfile.deserialize(prefs[Keys.PORTRAIT_LAYOUT], false)
+                .copy(opacity = clamped).clamped()
+            val l = TouchLayoutProfile.deserialize(prefs[Keys.LANDSCAPE_LAYOUT], true)
+                .copy(opacity = clamped).clamped()
+            prefs[Keys.PORTRAIT_LAYOUT] = p.serialize()
+            prefs[Keys.LANDSCAPE_LAYOUT] = l.serialize()
+        }
     }
 
     suspend fun updateControlsScale(scale: Float) {
-        context.emulatorDataStore.edit { it[Keys.CONTROLS_SCALE] = scale.coerceIn(0.8f, 1.25f) }
+        val clamped = scale.coerceIn(0.75f, 1.30f)
+        context.emulatorDataStore.edit { prefs ->
+            prefs[Keys.CONTROLS_SCALE] = clamped
+            val p = TouchLayoutProfile.deserialize(prefs[Keys.PORTRAIT_LAYOUT], false)
+                .copy(scale = clamped).clamped()
+            val l = TouchLayoutProfile.deserialize(prefs[Keys.LANDSCAPE_LAYOUT], true)
+                .copy(scale = clamped).clamped()
+            prefs[Keys.PORTRAIT_LAYOUT] = p.serialize()
+            prefs[Keys.LANDSCAPE_LAYOUT] = l.serialize()
+        }
+    }
+
+    suspend fun updateHapticsEnabled(enabled: Boolean) {
+        context.emulatorDataStore.edit { it[Keys.HAPTICS_ENABLED] = enabled }
+    }
+
+    suspend fun updateAutoHideTouchWithController(enabled: Boolean) {
+        context.emulatorDataStore.edit { it[Keys.AUTO_HIDE_TOUCH_CONTROLLER] = enabled }
+    }
+
+    suspend fun updateReducedMotion(enabled: Boolean) {
+        context.emulatorDataStore.edit { it[Keys.REDUCED_MOTION] = enabled }
+    }
+
+    suspend fun updatePortraitLayout(profile: TouchLayoutProfile) {
+        val clamped = profile.clamped()
+        context.emulatorDataStore.edit {
+            it[Keys.PORTRAIT_LAYOUT] = clamped.serialize()
+            it[Keys.CONTROLS_OPACITY] = clamped.opacity
+            it[Keys.CONTROLS_SCALE] = clamped.scale
+        }
+    }
+
+    suspend fun updateLandscapeLayout(profile: TouchLayoutProfile) {
+        val clamped = profile.clamped()
+        context.emulatorDataStore.edit {
+            it[Keys.LANDSCAPE_LAYOUT] = clamped.serialize()
+        }
+    }
+
+    suspend fun upsertControllerProfile(profile: ControllerProfile) {
+        context.emulatorDataStore.edit { prefs ->
+            val current = ControllerProfilesCodec.decode(prefs[Keys.CONTROLLER_PROFILES]).toMutableMap()
+            current[profile.descriptor] = profile
+            prefs[Keys.CONTROLLER_PROFILES] = ControllerProfilesCodec.encode(current)
+        }
+    }
+
+    suspend fun removeControllerProfile(descriptor: String) {
+        context.emulatorDataStore.edit { prefs ->
+            val current = ControllerProfilesCodec.decode(prefs[Keys.CONTROLLER_PROFILES]).toMutableMap()
+            current.remove(descriptor)
+            prefs[Keys.CONTROLLER_PROFILES] = ControllerProfilesCodec.encode(current)
+        }
     }
 
     suspend fun upsertRecentGame(record: RomRecord) {

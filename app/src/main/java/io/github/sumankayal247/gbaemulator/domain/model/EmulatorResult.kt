@@ -7,6 +7,9 @@ sealed class EmulatorError(val userMessage: String) {
     class CoreInitFailure(message: String) : EmulatorError(message)
     class SaveStorageFailure(message: String) : EmulatorError(message)
     class InvalidSaveImport(message: String) : EmulatorError(message)
+    class SaveStateFailure(message: String) : EmulatorError(message)
+    class InvalidCheatCode(message: String) : EmulatorError(message)
+    class InvalidBiosFile(message: String) : EmulatorError(message)
 }
 
 sealed interface AppResult<out T> {

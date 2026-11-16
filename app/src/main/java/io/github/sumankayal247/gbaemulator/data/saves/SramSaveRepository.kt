@@ -44,6 +44,16 @@ class SramSaveRepository(private val savesRootDir: File) {
 
     fun hasSave(record: RomRecord): Boolean = hasSave(record.system, record.sha256)
 
+    fun deleteSram(system: GameSystem, sha256: String): Boolean {
+        val dir = romSaveDir(system, sha256)
+        var deleted = false
+        listOf(PRIMARY_FILE, BACKUP_FILE, META_FILE).forEach { name ->
+            val f = File(dir, name)
+            if (f.exists() && f.delete()) deleted = true
+        }
+        return deleted
+    }
+
     fun hasSave(system: GameSystem, sha256: String): Boolean {
         val dir = romSaveDir(system, sha256)
         val primary = File(dir, PRIMARY_FILE)
