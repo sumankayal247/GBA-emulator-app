@@ -24,7 +24,7 @@ class CheatCodeValidatorTest {
 
         val raw = CheatCodeValidator.validateAndNormalize(GameSystem.GBA, "0202423c:03e7")
         assertTrue(raw is AppResult.Success)
-        assertEquals("0202423C:03E7", (raw as AppResult.Success).value)
+        assertEquals("0202423C 03E7", (raw as AppResult.Success).value)
     }
 
     @Test

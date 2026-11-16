@@ -17,12 +17,18 @@ object CheatCodeValidator {
     private val HEX_8 = Regex("^[0-9A-F]{8}$")
     private val HEX_4 = Regex("^[0-9A-F]{4}$")
     private val HEX_3 = Regex("^[0-9A-F]{3}$")
-    private const val MAX_LINES = 64
+    private const val MAX_LINES = 16
+    private const val MAX_TOTAL_LENGTH = 512
 
     fun validateAndNormalize(system: GameSystem, rawCode: String): AppResult<String> {
         val trimmed = rawCode.trim()
         if (trimmed.isEmpty()) {
             return AppResult.Failure(EmulatorError.InvalidCheatCode("Cheat code cannot be empty."))
+        }
+        if (trimmed.length > MAX_TOTAL_LENGTH) {
+            return AppResult.Failure(
+                EmulatorError.InvalidCheatCode("Cheat code exceeds maximum allowed length ($MAX_TOTAL_LENGTH chars)."),
+            )
         }
         val lines = trimmed.split('+', '\n', '\r', ';')
             .map { it.trim().uppercase() }
