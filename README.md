@@ -4,7 +4,8 @@ A native Android emulator app focused on **Game Boy Advance, Game Boy Color, and
 
 ## Project documents
 
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — product scope, architecture, milestones, and acceptance criteria.
+- [Agent instructions](AGENTS.md) — mandatory rules for all coding agents, including Arena.ai.
+- [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — product scope, architecture, milestones, production gates, and live completion ledger.
 - [Reference screenshots](docs/reference-images/README.md) — the eight supplied UI references and how they map to the planned app.
 
 ## Current status
