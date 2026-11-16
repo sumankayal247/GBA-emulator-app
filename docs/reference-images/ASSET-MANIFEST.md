@@ -15,16 +15,19 @@ The reference guide and implementation plan expect these files in this folder:
 
 ## Add the supplied image files
 
-The GitHub connection used for this planning change can create text files and Git objects, but it cannot transfer the uploaded image bytes directly from the chat workspace. The original-resolution screenshots are therefore provided as a separate ZIP bundle with this exact folder structure.
+The original-resolution screenshots are provided in the companion ZIP archive with this exact folder structure. The images are not yet committed to the repository; add them on a dedicated branch and open a PR.
 
-1. Download `GBA-emulator-reference-images.zip` from the ChatGPT response.
-2. Extract it at the root of a clone of this repository.
-3. Run:
+1. Download and extract `GBA-emulator-reference-images.zip` at the root of a clone.
+2. Create a branch and commit the screenshots:
 
 ```bash
+git switch -c docs/add-reference-screenshots
+# Extract the archive at the repository root, then:
 git add docs/reference-images
 git commit -m "docs: add emulator UI reference screenshots"
-git push origin main
+git push -u origin docs/add-reference-screenshots
 ```
+
+3. Open a pull request into `main`. Do not push directly to `main`.
 
 The archive preserves the original screenshot resolution. These files are visual references only, not production artwork or emulator ROM/BIOS assets.
