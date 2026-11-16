@@ -9,6 +9,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.util.Log
 import android.view.Surface
+import androidx.core.content.ContextCompat
 import io.github.sumankayal247.gbaemulator.data.preferences.PreferencesRepository
 import io.github.sumankayal247.gbaemulator.data.saves.SramSaveRepository
 import io.github.sumankayal247.gbaemulator.domain.model.AppResult
@@ -433,9 +434,11 @@ class EmulatorSession(
 
     private fun registerNoisyReceiver() {
         if (!noisyReceiverRegistered) {
-            context.registerReceiver(
+            ContextCompat.registerReceiver(
+                context,
                 noisyAudioReceiver,
                 IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
             )
             noisyReceiverRegistered = true
         }
