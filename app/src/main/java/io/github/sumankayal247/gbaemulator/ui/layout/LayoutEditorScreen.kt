@@ -2,17 +2,16 @@ package io.github.sumankayal247.gbaemulator.ui.layout
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +29,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -43,16 +43,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.sumankayal247.gbaemulator.domain.model.EmulatorPreferences
 import io.github.sumankayal247.gbaemulator.domain.model.LayoutPreset
+import io.github.sumankayal247.gbaemulator.domain.model.ShellColors
 import io.github.sumankayal247.gbaemulator.domain.model.TouchLayoutProfile
 import io.github.sumankayal247.gbaemulator.ui.theme.EmulatorColors
+import io.github.sumankayal247.gbaemulator.emulator.TouchInputTracker
+import io.github.sumankayal247.gbaemulator.ui.gameplay.HandheldScreenPlaceholder
+import io.github.sumankayal247.gbaemulator.ui.gameplay.LandscapeHandheldLayout
+import io.github.sumankayal247.gbaemulator.ui.gameplay.PortraitHandheldLayout
+import io.github.sumankayal247.gbaemulator.ui.gameplay.ProvideHandheldPalette
+import io.github.sumankayal247.gbaemulator.ui.gameplay.handheldPalette
+import io.github.sumankayal247.gbaemulator.ui.gameplay.handheldShellBrush
 import kotlin.math.roundToInt
 
 /**
@@ -66,6 +79,7 @@ fun LayoutEditorScreen(
     onSavePortraitLayout: (TouchLayoutProfile) -> Unit,
     onSaveLandscapeLayout: (TouchLayoutProfile) -> Unit,
     onToggleHaptics: (Boolean) -> Unit,
+    onSaveShellColor: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var editingLandscape by remember { mutableStateOf(false) }
@@ -80,6 +94,8 @@ fun LayoutEditorScreen(
     }
 
     val hasUnsavedChanges = draft != persisted
+    var shellDraft by remember(preferences.shellColorHex) { mutableStateOf(preferences.shellColorHex) }
+    val normalizedShell = ShellColors.normalize(shellDraft)
 
     Column(
         modifier = modifier
@@ -132,6 +148,20 @@ fun LayoutEditorScreen(
         HandheldLayoutPreview(
             profile = draft,
             landscape = editingLandscape,
+            shellColorHex = normalizedShell ?: preferences.shellColorHex,
+        )
+        Text(
+            text = "Scaled to this window’s dimensions. Rotated preview is an estimate; system insets can differ in gameplay.",
+            style = MaterialTheme.typography.bodySmall,
+            color = EmulatorColors.TextSecondary,
+        )
+
+        Spacer(Modifier.height(14.dp))
+        ShellColorEditor(
+            value = shellDraft,
+            onValueChange = { shellDraft = it },
+            onSave = { normalizedShell?.let(onSaveShellColor) },
+            canSave = normalizedShell != null && normalizedShell != preferences.shellColorHex,
         )
 
         Spacer(Modifier.height(14.dp))
@@ -350,164 +380,54 @@ fun LayoutEditorScreen(
 private fun HandheldLayoutPreview(
     profile: TouchLayoutProfile,
     landscape: Boolean,
+    shellColorHex: String,
 ) {
-    val shellBrush = Brush.verticalGradient(
-        listOf(EmulatorColors.ShellPurpleLight, EmulatorColors.ShellPurple, EmulatorColors.ShellPurpleDark),
-    )
+    val configuration = LocalConfiguration.current
+    val shortSide = minOf(configuration.screenWidthDp, configuration.screenHeightDp).coerceAtLeast(1)
+    val longSide = maxOf(configuration.screenWidthDp, configuration.screenHeightDp).coerceAtLeast(1)
+    val deviceWidth = if (landscape) longSide else shortSide
+    val deviceHeight = if (landscape) shortSide else longSide
+    val tracker = remember { TouchInputTracker() }
+    val palette = remember(shellColorHex) { handheldPalette(shellColorHex) }
 
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(if (landscape) 1f else 0.62f)
-                .aspectRatio(if (landscape) 1.85f else 0.58f)
-                .clip(RoundedCornerShape(18.dp))
-                .background(shellBrush)
-                .border(2.dp, EmulatorColors.CardBorder, RoundedCornerShape(18.dp))
-                .padding(10.dp),
-        ) {
-            if (!landscape) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(0.46f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(EmulatorColors.ScreenBezel),
-                    ) {
-                        Text("240×160", style = MaterialTheme.typography.labelSmall, color = EmulatorColors.TextMuted)
-                    }
-
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .offset(y = (profile.shouldersOffsetYdp * 0.25f).dp)
-                            .alpha(profile.opacity),
-                    ) {
-                        PreviewPill("L", 34 * profile.scale, 12 * profile.scale)
-                        PreviewPill("R", 34 * profile.scale, 12 * profile.scale)
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(0.36f)
-                            .padding(horizontal = 4.dp),
-                    ) {
-                        PreviewCross(
-                            size = 44 * profile.scale,
-                            opacity = profile.opacity,
-                            modifier = Modifier.offset(
-                                x = (profile.dpadOffsetXdp * 0.25f).dp,
-                                y = (profile.dpadOffsetYdp * 0.25f).dp,
-                            ),
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier
-                                .offset(
-                                    x = (profile.buttonsOffsetXdp * 0.25f).dp,
-                                    y = (profile.buttonsOffsetYdp * 0.25f).dp,
-                                )
-                                .alpha(profile.opacity),
-                        ) {
-                            PreviewCircle("B", 22 * profile.scale)
-                            PreviewCircle("A", 22 * profile.scale)
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        val previewWidth = minOf(maxWidth.value, 340f * deviceWidth / deviceHeight).dp
+        val previewHeight = (previewWidth.value * deviceHeight / deviceWidth).dp
+        // Measure exactly as gameplay does at the current window's dp size, then scale the
+        // entire result (including text, offsets and shadows) down as a single layer.
+        Layout(
+            modifier = Modifier.width(previewWidth).height(previewHeight).clip(RoundedCornerShape(12.dp)),
+            content = {
+                ProvideHandheldPalette(shellColorHex) {
+                    Box(Modifier.fillMaxSize().background(handheldShellBrush(palette))) {
+                        if (landscape) {
+                            LandscapeHandheldLayout(
+                                tracker = tracker, pressedButtons = emptySet(), onInputChanged = {},
+                                profile = profile, onOpenMenu = {}, interactive = false,
+                                screenViewport = { HandheldScreenPlaceholder(Modifier.fillMaxSize()) },
+                            )
+                        } else {
+                            PortraitHandheldLayout(
+                                tracker = tracker, pressedButtons = emptySet(), onInputChanged = {},
+                                profile = profile, onOpenMenu = {}, interactive = false,
+                                screenViewport = { HandheldScreenPlaceholder(Modifier.fillMaxSize()) },
+                            )
                         }
-                    }
-
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .alpha(profile.opacity),
-                    ) {
-                        PreviewPill("MENU", 26f, 10f)
-                        PreviewPill("SEL", 24f, 10f)
-                        PreviewPill("STA", 24f, 10f)
                     }
                 }
-            } else {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .width(68.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .offset(y = (profile.shouldersOffsetYdp * 0.25f).dp)
-                                .alpha(profile.opacity),
-                        ) {
-                            PreviewPill("L", 34 * profile.scale, 12 * profile.scale)
-                        }
-                        PreviewCross(
-                            size = 42 * profile.scale,
-                            opacity = profile.opacity,
-                            modifier = Modifier.offset(
-                                x = (profile.dpadOffsetXdp * 0.25f).dp,
-                                y = (profile.dpadOffsetYdp * 0.25f).dp,
-                            ),
-                        )
-                        PreviewPill("SEL", 24f, 10f)
-                    }
-
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .padding(horizontal = 6.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(EmulatorColors.ScreenBezel),
-                    ) {
-                        Text("240×160", style = MaterialTheme.typography.labelSmall, color = EmulatorColors.TextMuted)
-                    }
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .width(68.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .offset(y = (profile.shouldersOffsetYdp * 0.25f).dp)
-                                .alpha(profile.opacity),
-                        ) {
-                            PreviewPill("R", 34 * profile.scale, 12 * profile.scale)
-                        }
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            modifier = Modifier
-                                .offset(
-                                    x = (profile.buttonsOffsetXdp * 0.25f).dp,
-                                    y = (profile.buttonsOffsetYdp * 0.25f).dp,
-                                )
-                                .alpha(profile.opacity),
-                        ) {
-                            PreviewCircle("B", 22 * profile.scale)
-                            PreviewCircle("A", 22 * profile.scale)
-                        }
-                        PreviewPill("STA", 24f, 10f)
-                    }
+            },
+        ) { measurables, constraints ->
+            val realWidth = deviceWidth.dp.roundToPx().coerceAtLeast(1)
+            val realHeight = deviceHeight.dp.roundToPx().coerceAtLeast(1)
+            val child = measurables.single().measure(Constraints.fixed(realWidth, realHeight))
+            val width = constraints.maxWidth
+            val height = constraints.maxHeight
+            val scale = minOf(width.toFloat() / realWidth, height.toFloat() / realHeight)
+            layout(width, height) {
+                child.placeRelativeWithLayer(0, 0) {
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0f, 0f)
                 }
             }
         }
@@ -515,42 +435,58 @@ private fun HandheldLayoutPreview(
 }
 
 @Composable
-private fun PreviewCross(size: Float, opacity: Float, modifier: Modifier = Modifier) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier
-            .size(size.dp)
-            .alpha(opacity)
-            .clip(RoundedCornerShape(8.dp))
-            .background(EmulatorColors.ButtonFace),
+private fun ShellColorEditor(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSave: () -> Unit,
+    canSave: Boolean,
+) {
+    val normalized = ShellColors.normalize(value)
+    Surface(
+        color = EmulatorColors.CardSurface,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(16.dp)),
     ) {
-        Text("+", color = EmulatorColors.ButtonOutline, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun PreviewCircle(label: String, diameter: Float) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(diameter.dp)
-            .clip(CircleShape)
-            .background(EmulatorColors.ButtonFace),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = EmulatorColors.ButtonOutline)
-    }
-}
-
-@Composable
-private fun PreviewPill(label: String, width: Float, height: Float) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(width = width.dp, height = height.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(EmulatorColors.ButtonFace),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = EmulatorColors.ButtonOutline)
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Shell colour", style = MaterialTheme.typography.titleMedium, color = EmulatorColors.TextPrimary)
+            Text("Applies to both orientations", style = MaterialTheme.typography.bodySmall, color = EmulatorColors.TextSecondary)
+            ShellColors.PRESETS.chunked(4).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    row.forEach { preset ->
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.weight(1f)
+                                .clickable(role = Role.Button) { onValueChange(preset.hex) }
+                                .semantics { contentDescription = "${preset.label} shell colour" }
+                                .padding(vertical = 6.dp),
+                        ) {
+                            Box(
+                                Modifier.size(32.dp)
+                                    .background(Color(preset.hex.toLong(16) or 0xFF000000), CircleShape)
+                                    .border(
+                                        if (normalized == preset.hex) 3.dp else 1.dp,
+                                        if (normalized == preset.hex) Color.White else EmulatorColors.CardBorder,
+                                        CircleShape,
+                                    ),
+                            )
+                            Text(preset.label, maxLines = 1, style = MaterialTheme.typography.labelSmall, color = EmulatorColors.TextPrimary)
+                        }
+                    }
+                }
+            }
+            OutlinedTextField(
+                value = value,
+                onValueChange = { onValueChange(it.take(9)) },
+                label = { Text("Custom colour (RGB hex)") },
+                supportingText = { Text(if (normalized == null) "Enter six hexadecimal digits, e.g. 6E00FF" else "Preview updates before saving") },
+                isError = normalized == null,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(onClick = onSave, enabled = canSave, modifier = Modifier.fillMaxWidth()) {
+                Text(if (normalized == null) "Enter a valid colour" else if (canSave) "Save shell colour" else "Shell colour saved")
+            }
+        }
     }
 }
 

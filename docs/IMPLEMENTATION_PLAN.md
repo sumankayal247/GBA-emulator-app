@@ -199,6 +199,7 @@ A control-layout editor inspired by the handheld reference:
 - Reset to defaults.
 - Save separate portrait and landscape layouts.
 - Do not implement arbitrary per-button rotation/skin packs in the first milestone.
+- **Proposed narrow amendment (owner review pending):** one global, user-selectable shell tint shared by both orientations, defaulting to classic purple. Keep touch profiles and their serialization unchanged. The editor uses the gameplay control layouts at scaled window dimensions; rotated previews may differ where system insets change. See ADR 0005. This is not a skin pack.
 
 ### D. Controllers
 
@@ -540,7 +541,7 @@ Use only these status values:
 | Video/audio pipeline | IN PROGRESS | EGL/GLES3 `SurfaceView` renderer + NDK AAudio SPSC resampled pipeline implemented; real-device benchmarks & `docs/PERFORMANCE_BUDGET.md` pending |
 | SAF import and library | IN PROGRESS | Room v1 schema (`games`, `rom_sources`, `saved_folders`, `cheats`, `core_option_overrides`), cancellable SAF `OpenDocumentTree` scanner, single-file import, SHA-256 identity, relink, custom covers, search/filter/sort, and unit tests implemented; real-device OEM SAF provider tests pending |
 | SRAM persistence and recovery | IN PROGRESS | Atomic temp+fsync+rename writes, `.bak` corruption recovery, and SAF export/import implemented + unit & native round-trip tests; real-device force-stop test pending |
-| Touch controls and responsive layouts | IN PROGRESS | Portrait & landscape virtual handhelds, multi-pointer `TouchInputTracker`, clamped layout editor with presets/preview/haptics/Undo/Reset, and unit tests implemented; real-device multi-touch & rotation testing pending |
+| Touch controls and responsive layouts | IN PROGRESS | Portrait & landscape virtual handhelds, multi-pointer `TouchInputTracker`, layout editor, and proposed global shell tint / shared scaled preview changes; build, real-device multi-touch, preview/rotation and owner review pending |
 | Save-state slots | IN PROGRESS | Per-ROM isolated 8-slot save states with captured PNG thumbnails, SHA-256 checksums, `.bak` quarantine/recovery, overwrite confirmation, and native + JVM unit tests implemented; real-device round-trip verification pending |
 | Cheats and core options | IN PROGRESS | Dynamic core-options query/UI (global + per-ROM, zero unsupported/hardcoded toggles), validated per-ROM Libretro cheats, optional user BIOS import (`BiosRepository`), and native + JVM unit tests implemented; real-device verification pending |
 | Bluetooth/USB controllers | IN PROGRESS | `ControllerManager`, `GamepadInputTracker`, automatic device discovery, per-device remapping & deadzone persistence, live input tester, hot-plug disconnect input release, auto-hide touch controls, and JVM unit tests implemented; physical BT/USB controller matrix testing pending |

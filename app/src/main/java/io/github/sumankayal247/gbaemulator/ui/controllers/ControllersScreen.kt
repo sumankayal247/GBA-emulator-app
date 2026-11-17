@@ -244,7 +244,7 @@ fun ControllersScreen(
                         color = EmulatorColors.TextPrimary,
                     )
                     Text(
-                        text = "Hide on-screen buttons when a physical controller is connected (keeps Menu pill visible)",
+                        text = "Hide on-screen buttons in landscape after you use a physical controller (Menu & Controls pills stay visible). Touch controls stay visible until controller input is detected.",
                         style = MaterialTheme.typography.bodySmall,
                         color = EmulatorColors.TextSecondary,
                     )

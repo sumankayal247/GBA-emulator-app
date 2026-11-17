@@ -42,6 +42,25 @@ class ControllerManager(
     private val _hasConnectedController = MutableStateFlow(false)
     val hasConnectedController: StateFlow<Boolean> = _hasConnectedController.asStateFlow()
 
+    /**
+     * True only after the user has actually pressed a gamepad button or moved a
+     * stick/hat/trigger in this session. Device *presence* alone must never hide
+     * the touch controls: some phones expose built-in or virtual input devices
+     * that advertise a joystick/gamepad source without the user ever using them,
+     * and hiding controls on presence alone left the game unplayable (no way to
+     * input) until the user dug through the Controllers tab to disable auto-hide.
+     */
+    private val _hasReceivedGamepadInput = MutableStateFlow(false)
+    val hasReceivedGamepadInput: StateFlow<Boolean> = _hasReceivedGamepadInput.asStateFlow()
+
+    /**
+     * Monotonic counter bumped on every real gamepad input event. Gameplay uses
+     * it to re-hide touch controls when the user presses the controller again
+     * after manually showing touch controls.
+     */
+    private val _gamepadInputSignal = MutableStateFlow(0L)
+    val gamepadInputSignal: StateFlow<Long> = _gamepadInputSignal.asStateFlow()
+
     private val _pressedButtons = MutableStateFlow<Set<VirtualButton>>(emptySet())
     val pressedButtons: StateFlow<Set<VirtualButton>> = _pressedButtons.asStateFlow()
 
@@ -136,6 +155,16 @@ class ControllerManager(
 
         _controllers.value = connectedList
         _hasConnectedController.value = connectedDescriptors.isNotEmpty()
+        if (connectedDescriptors.isEmpty()) {
+            // All controllers gone: forget that input was ever received so the
+            // next controller starts with touch controls visible again.
+            _hasReceivedGamepadInput.value = false
+        }
+    }
+
+    private fun markGamepadInputReceived() {
+        _hasReceivedGamepadInput.value = true
+        _gamepadInputSignal.value += 1L
     }
 
     fun startCapturingBinding(descriptor: String, button: VirtualButton) {
@@ -215,6 +244,7 @@ class ControllerManager(
             profile = profile,
         )
         if (handled) {
+            markGamepadInputReceived()
             _pressedButtons.value = tracker.pressedButtons()
             onGamepadBitMaskChanged(tracker.currentBitMask())
         }
@@ -250,6 +280,15 @@ class ControllerManager(
             rTrigger = rTrig,
             profile = profile,
         )
+        // Only count motion that is actually past the deadzone as "the user is
+        // playing with the controller". Idle axis noise from a phantom/virtual
+        // device must not hide the touch controls.
+        val hasRealMotion = hatX != 0f || hatY != 0f ||
+            kotlin.math.abs(stickX) > 0.15f || kotlin.math.abs(stickY) > 0.15f ||
+            lTrig > 0.15f || rTrig > 0.15f
+        if (hasRealMotion) {
+            markGamepadInputReceived()
+        }
         _pressedButtons.value = tracker.pressedButtons()
         onGamepadBitMaskChanged(newMask)
         return true
@@ -267,12 +306,62 @@ class ControllerManager(
     }
 
     companion object {
-        fun isGamepadDevice(device: InputDevice): Boolean {
-            if (device.isVirtual) return false
-            val sources = device.sources
+        fun isGamepadDevice(device: InputDevice): Boolean =
+            isGamepadDevice(
+                sources = device.sources,
+                motionRangeSources = device.motionRanges.map { it.source },
+                deviceName = device.name,
+                isVirtual = device.isVirtual,
+            )
+
+        /**
+         * Pure, unit-testable gamepad classification.
+         *
+         * The previous check accepted *any* device advertising SOURCE_JOYSTICK.
+         * Several phones expose built-in/OEM input devices (touchscreens, remotes,
+         * virtual/uinput devices) that advertise a joystick source without being
+         * real controllers. Treating those as connected controllers triggered
+         * auto-hide of the touch controls on launch, leaving the game with no
+         * visible controls at all.
+         *
+         * Rules:
+         * - Virtual devices are never gamepads.
+         * - Devices named like virtual/uinput devices are never gamepads.
+         * - Devices advertising SOURCE_GAMEPAD are gamepads (including
+         *   button-only pads with no axes).
+         * - Joystick-only devices (no gamepad source) are gamepads only if they
+         *   expose real joystick/gamepad motion ranges and their name does not
+         *   look like a touchscreen/remote/sensor/keyboard/mouse.
+         */
+        fun isGamepadDevice(
+            sources: Int,
+            motionRangeSources: List<Int>,
+            deviceName: String,
+            isVirtual: Boolean,
+        ): Boolean {
+            if (isVirtual) return false
+            val name = deviceName.lowercase()
+            if (name.contains("virtual") || name.contains("uinput")) return false
+
             val isGamepad = (sources and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
             val isJoystick = (sources and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
-            return isGamepad || isJoystick
+            if (!isGamepad && !isJoystick) return false
+            if (isGamepad) return true
+
+            // Joystick-only: require real axes, and reject obvious non-controllers.
+            val hasJoystickAxis = motionRangeSources.any { src ->
+                (src and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
+                    (src and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+                    (src and InputDevice.SOURCE_CLASS_JOYSTICK) == InputDevice.SOURCE_CLASS_JOYSTICK
+            }
+            if (!hasJoystickAxis) return false
+            val nonControllerNameHints = listOf(
+                "gpio", "pmic", "touch", "focaltech", "synaptics", "goodix",
+                "fts", "nvt", "ilitek", "himax", "sensor", "accelerometer",
+                "gyroscope", "remote", "keyboard", "mouse", "camera",
+            )
+            if (nonControllerNameHints.any { name.contains(it) }) return false
+            return true
         }
 
         fun formatKeyCodeLabel(keyCode: Int): String =

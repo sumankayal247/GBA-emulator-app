@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material3.AlertDialog
@@ -59,6 +60,7 @@ fun InGameMenuDialog(
     muted: Boolean,
     fastForward: Boolean,
     orientationLocked: Boolean,
+    autoHideTouchWithController: Boolean,
     scalingMode: ScalingMode,
     coreVersion: String,
     onOpenSaveStates: () -> Unit,
@@ -72,6 +74,7 @@ fun InGameMenuDialog(
     onToggleFastForward: (Boolean) -> Unit,
     onToggleOrientationLock: (Boolean) -> Unit,
     onToggleScalingMode: () -> Unit,
+    onToggleAutoHideTouch: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var confirmAction by remember { mutableStateOf<String?>(null) }
@@ -172,6 +175,12 @@ fun InGameMenuDialog(
                     label = "Lock orientation",
                     checked = orientationLocked,
                     onCheckedChange = onToggleOrientationLock,
+                )
+                MenuToggleRow(
+                    icon = Icons.Filled.SportsEsports,
+                    label = "Auto-hide touch controls",
+                    checked = autoHideTouchWithController,
+                    onCheckedChange = onToggleAutoHideTouch,
                 )
                 MenuActionRow(
                     icon = Icons.Filled.AspectRatio,
