@@ -26,12 +26,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,7 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
@@ -92,6 +93,7 @@ fun GameplayScreen(
     onToggleFastForward: (Boolean) -> Unit,
     onToggleOrientationLock: (locked: Boolean, currentIsLandscape: Boolean) -> Unit,
     onToggleScalingMode: () -> Unit,
+    onToggleAutoHideTouch: (Boolean) -> Unit,
     onDismissToast: () -> Unit,
 ) {
     val tracker = remember { TouchInputTracker() }
@@ -145,180 +147,233 @@ fun GameplayScreen(
 
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val layoutProfile = (if (isLandscape) state.preferences.landscapeLayout else state.preferences.portraitLayout).clamped()
-    val hideTouchForController = state.hasConnectedController && state.preferences.autoHideTouchWithController
 
-    val shellBrush = Brush.verticalGradient(
-        listOf(EmulatorColors.ShellPurpleLight, EmulatorColors.ShellPurple, EmulatorColors.ShellPurpleDark),
-    )
+    // Let the user bring the touch controls back while a controller is active.
+    // Pressing any controller button again (gamepadInputSignal bump) re-hides them.
+    var userForcedShowControls by remember { mutableStateOf(false) }
+    LaunchedEffect(state.gamepadInputSignal) {
+        if (state.gamepadInputSignal > 0L) {
+            userForcedShowControls = false
+        }
+    }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (hideTouchForController) Color.Black else Color.Transparent)
-            .then(if (hideTouchForController) Modifier else Modifier.background(shellBrush))
-            .safeDrawingPadding(),
-    ) {
-        if (state.session.state == EmulatorState.ERROR) {
-            ErrorOverlay(
-                message = state.session.errorMessage ?: "Emulator encountered an unexpected error.",
-                onBackToHome = onQuitToHome,
-            )
-        } else if (hideTouchForController) {
-            // Full-screen viewport when an external physical controller is active & touch auto-hide is on,
-            // with an always-accessible Menu pill in the top-end corner.
-            Box(modifier = Modifier.fillMaxSize()) {
-                GameViewportSurface(
-                    onAttachSurface = onAttachSurface,
-                    onResizeSurface = onResizeSurface,
-                    onDetachSurface = onDetachSurface,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp),
+    // Only hide touch controls after the user has *actually used* a controller,
+    // and only in landscape. Hiding on mere device presence (the old behaviour)
+    // left the game with no visible controls at all when a phone exposed a
+    // built-in/virtual joystick device, and fullscreen portrait is unplayably
+    // small for the landscape GBA screen anyway.
+    val controllerActivelyUsed = state.hasConnectedController && state.hasReceivedGamepadInput
+    val hideTouchForController = controllerActivelyUsed &&
+        state.preferences.autoHideTouchWithController &&
+        isLandscape &&
+        !userForcedShowControls
+
+    val shellPalette = remember(state.preferences.shellColorHex) {
+        handheldPalette(state.preferences.shellColorHex)
+    }
+    val shellBrush = handheldShellBrush(shellPalette)
+
+    CompositionLocalProvider(LocalHandheldPalette provides shellPalette) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(if (hideTouchForController) Color.Black else Color.Transparent)
+                .then(if (hideTouchForController) Modifier else Modifier.background(shellBrush))
+                .safeDrawingPadding(),
+        ) {
+            if (state.session.state == EmulatorState.ERROR) {
+                ErrorOverlay(
+                    message = state.session.errorMessage ?: "Emulator encountered an unexpected error.",
+                    onBackToHome = onQuitToHome,
                 )
-                Surface(
-                    color = EmulatorColors.DarkSurface.copy(alpha = 0.72f),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(14.dp)
-                        .semantics {
-                            contentDescription = "Open game menu"
-                            role = Role.Button
-                        }
-                        .clickable(onClick = onOpenMenu),
-                ) {
+            } else if (hideTouchForController) {
+                // Full-screen viewport in landscape after the user has actually used
+                // an external controller & touch auto-hide is on. Menu and Controls
+                // pills stay visible in the top-end corner so touch controls can
+                // always be brought back without leaving the game.
+                Box(modifier = Modifier.fillMaxSize()) {
+                    GameViewportSurface(
+                        onAttachSurface = onAttachSurface,
+                        onResizeSurface = onResizeSurface,
+                        onDetachSurface = onDetachSurface,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(8.dp),
+                    )
                     Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(14.dp),
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Menu,
-                            contentDescription = null,
-                            tint = EmulatorColors.TextPrimary,
-                            modifier = Modifier.size(18.dp),
+                        TopPillButton(
+                            icon = Icons.Filled.SportsEsports,
+                            label = "Controls",
+                            contentDescription = "Show touch controls",
+                            onClick = { userForcedShowControls = true },
                         )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "Menu",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = EmulatorColors.TextPrimary,
+                        TopPillButton(
+                            icon = Icons.Filled.Menu,
+                            label = "Menu",
+                            contentDescription = "Open game menu",
+                            onClick = onOpenMenu,
                         )
                     }
                 }
+            } else if (isLandscape) {
+                LandscapeHandheldLayout(
+                    tracker = tracker,
+                    pressedButtons = pressedButtons,
+                    onInputChanged = syncInput,
+                    profile = layoutProfile,
+                    onOpenMenu = onOpenMenu,
+                    screenViewport = {
+                        GameViewportSurface(
+                            onAttachSurface = onAttachSurface,
+                            onResizeSurface = onResizeSurface,
+                            onDetachSurface = onDetachSurface,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    },
+                )
+            } else {
+                PortraitHandheldLayout(
+                    tracker = tracker,
+                    pressedButtons = pressedButtons,
+                    onInputChanged = syncInput,
+                    profile = layoutProfile,
+                    onOpenMenu = onOpenMenu,
+                    screenViewport = {
+                        GameViewportSurface(
+                            onAttachSurface = onAttachSurface,
+                            onResizeSurface = onResizeSurface,
+                            onDetachSurface = onDetachSurface,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    },
+                )
             }
-        } else if (isLandscape) {
-            LandscapeHandheldLayout(
-                tracker = tracker,
-                pressedButtons = pressedButtons,
-                onInputChanged = syncInput,
-                profile = layoutProfile,
-                onOpenMenu = onOpenMenu,
-                screenViewport = {
-                    GameViewportSurface(
-                        onAttachSurface = onAttachSurface,
-                        onResizeSurface = onResizeSurface,
-                        onDetachSurface = onDetachSurface,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                },
-            )
-        } else {
-            PortraitHandheldLayout(
-                tracker = tracker,
-                pressedButtons = pressedButtons,
-                onInputChanged = syncInput,
-                profile = layoutProfile,
-                onOpenMenu = onOpenMenu,
-                screenViewport = {
-                    GameViewportSurface(
-                        onAttachSurface = onAttachSurface,
-                        onResizeSurface = onResizeSurface,
-                        onDetachSurface = onDetachSurface,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                },
-            )
-        }
 
-        val toast = state.toastMessage
-        if (toast != null) {
-            Surface(
-                color = EmulatorColors.DarkSurface.copy(alpha = 0.92f),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 12.dp, start = 20.dp, end = 20.dp),
-            ) {
-                Text(
-                    text = toast,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = EmulatorColors.TextPrimary,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            val toast = state.toastMessage
+            if (toast != null) {
+                Surface(
+                    color = EmulatorColors.DarkSurface.copy(alpha = 0.92f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp, start = 20.dp, end = 20.dp),
+                ) {
+                    Text(
+                        text = toast,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = EmulatorColors.TextPrimary,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                }
+            }
+
+            val activeRom = state.session.activeRom
+            val activeTitle = activeRom?.effectiveTitle ?: "Game"
+
+            when (state.activeDialog) {
+                ActiveGameplayDialog.NONE -> Unit
+
+                ActiveGameplayDialog.MAIN_MENU -> InGameMenuDialog(
+                    gameTitle = activeTitle,
+                    muted = state.session.muted,
+                    fastForward = state.session.fastForward,
+                    orientationLocked = state.preferences.orientationLock != OrientationLock.AUTO,
+                    autoHideTouchWithController = state.preferences.autoHideTouchWithController,
+                    scalingMode = state.session.scalingMode,
+                    coreVersion = state.session.coreVersion,
+                    onOpenSaveStates = onOpenSaveStates,
+                    onOpenLoadStates = onOpenLoadStates,
+                    onOpenCoreOptions = onOpenCoreOptions,
+                    onOpenCheats = onOpenCheats,
+                    onFlushBatterySave = onFlushBatterySave,
+                    onRestartConfirmed = onRestartGame,
+                    onQuitConfirmed = onQuitToHome,
+                    onToggleMute = onToggleMute,
+                    onToggleFastForward = onToggleFastForward,
+                    onToggleOrientationLock = { locked -> onToggleOrientationLock(locked, isLandscape) },
+                    onToggleScalingMode = onToggleScalingMode,
+                    onToggleAutoHideTouch = onToggleAutoHideTouch,
+                    onDismiss = onCloseMenuAndResume,
+                )
+
+                ActiveGameplayDialog.SAVE_STATES -> SaveStateDialog(
+                    mode = SaveStateDialogMode.SAVE,
+                    gameTitle = activeTitle,
+                    slots = state.saveStateSlots,
+                    onSelectSlot = onSaveStateToSlot,
+                    onDeleteSlot = onDeleteSaveStateSlot,
+                    onDismiss = onBackToMainMenu,
+                )
+
+                ActiveGameplayDialog.LOAD_STATES -> SaveStateDialog(
+                    mode = SaveStateDialogMode.LOAD,
+                    gameTitle = activeTitle,
+                    slots = state.saveStateSlots,
+                    onSelectSlot = onLoadStateFromSlot,
+                    onDeleteSlot = onDeleteSaveStateSlot,
+                    onDismiss = onBackToMainMenu,
+                )
+
+                ActiveGameplayDialog.CORE_OPTIONS -> CoreOptionsDialog(
+                    options = state.session.coreOptions,
+                    coreVersion = state.session.coreVersion,
+                    onSelectOptionValue = onSetCoreOption,
+                    onDismiss = onBackToMainMenu,
+                )
+
+                ActiveGameplayDialog.CHEATS -> CheatCodeDialog(
+                    gameTitle = activeTitle,
+                    system = activeRom?.system ?: GameSystem.GBA,
+                    cheats = state.activeRomCheats,
+                    onAddCheat = onAddCheat,
+                    onUpdateCheat = onUpdateCheat,
+                    onToggleCheat = onToggleCheat,
+                    onDeleteCheat = onDeleteCheat,
+                    onDismiss = onBackToMainMenu,
                 )
             }
         }
+    }
+}
 
-        val activeRom = state.session.activeRom
-        val activeTitle = activeRom?.effectiveTitle ?: "Game"
-
-        when (state.activeDialog) {
-            ActiveGameplayDialog.NONE -> Unit
-
-            ActiveGameplayDialog.MAIN_MENU -> InGameMenuDialog(
-                gameTitle = activeTitle,
-                muted = state.session.muted,
-                fastForward = state.session.fastForward,
-                orientationLocked = state.preferences.orientationLock != OrientationLock.AUTO,
-                scalingMode = state.session.scalingMode,
-                coreVersion = state.session.coreVersion,
-                onOpenSaveStates = onOpenSaveStates,
-                onOpenLoadStates = onOpenLoadStates,
-                onOpenCoreOptions = onOpenCoreOptions,
-                onOpenCheats = onOpenCheats,
-                onFlushBatterySave = onFlushBatterySave,
-                onRestartConfirmed = onRestartGame,
-                onQuitConfirmed = onQuitToHome,
-                onToggleMute = onToggleMute,
-                onToggleFastForward = onToggleFastForward,
-                onToggleOrientationLock = { locked -> onToggleOrientationLock(locked, isLandscape) },
-                onToggleScalingMode = onToggleScalingMode,
-                onDismiss = onCloseMenuAndResume,
+@Composable
+private fun TopPillButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        color = EmulatorColors.DarkSurface.copy(alpha = 0.72f),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .semantics {
+                this.contentDescription = contentDescription
+                role = Role.Button
+            }
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = EmulatorColors.TextPrimary,
+                modifier = Modifier.size(18.dp),
             )
-
-            ActiveGameplayDialog.SAVE_STATES -> SaveStateDialog(
-                mode = SaveStateDialogMode.SAVE,
-                gameTitle = activeTitle,
-                slots = state.saveStateSlots,
-                onSelectSlot = onSaveStateToSlot,
-                onDeleteSlot = onDeleteSaveStateSlot,
-                onDismiss = onBackToMainMenu,
-            )
-
-            ActiveGameplayDialog.LOAD_STATES -> SaveStateDialog(
-                mode = SaveStateDialogMode.LOAD,
-                gameTitle = activeTitle,
-                slots = state.saveStateSlots,
-                onSelectSlot = onLoadStateFromSlot,
-                onDeleteSlot = onDeleteSaveStateSlot,
-                onDismiss = onBackToMainMenu,
-            )
-
-            ActiveGameplayDialog.CORE_OPTIONS -> CoreOptionsDialog(
-                options = state.session.coreOptions,
-                coreVersion = state.session.coreVersion,
-                onSelectOptionValue = onSetCoreOption,
-                onDismiss = onBackToMainMenu,
-            )
-
-            ActiveGameplayDialog.CHEATS -> CheatCodeDialog(
-                gameTitle = activeTitle,
-                system = activeRom?.system ?: GameSystem.GBA,
-                cheats = state.activeRomCheats,
-                onAddCheat = onAddCheat,
-                onUpdateCheat = onUpdateCheat,
-                onToggleCheat = onToggleCheat,
-                onDeleteCheat = onDeleteCheat,
-                onDismiss = onBackToMainMenu,
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = EmulatorColors.TextPrimary,
             )
         }
     }
@@ -331,11 +386,12 @@ private fun GameViewportSurface(
     onDetachSurface: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val palette = LocalHandheldPalette.current
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(EmulatorColors.ScreenBezel)
-            .border(2.dp, Color(0xFF1F103D), RoundedCornerShape(18.dp))
+            .background(palette.bezel)
+            .border(2.dp, palette.shellOutline, RoundedCornerShape(18.dp))
             .padding(6.dp),
     ) {
         AndroidView(
@@ -372,12 +428,13 @@ private fun GameViewportSurface(
 }
 
 @Composable
-private fun PortraitHandheldLayout(
+internal fun PortraitHandheldLayout(
     tracker: TouchInputTracker,
     pressedButtons: Set<VirtualButton>,
     onInputChanged: () -> Unit,
     profile: TouchLayoutProfile,
     onOpenMenu: () -> Unit,
+    interactive: Boolean = true,
     screenViewport: @Composable () -> Unit,
 ) {
     val opacity = profile.opacity
@@ -419,6 +476,7 @@ private fun PortraitHandheldLayout(
                 tracker = tracker,
                 isPressed = VirtualButton.L in pressedButtons,
                 onInputChanged = onInputChanged,
+                interactive = interactive,
                 opacity = opacity,
                 widthDp = (104f * scale).dp,
                 heightDp = (34f * scale).dp,
@@ -429,6 +487,7 @@ private fun PortraitHandheldLayout(
                 tracker = tracker,
                 isPressed = VirtualButton.R in pressedButtons,
                 onInputChanged = onInputChanged,
+                interactive = interactive,
                 opacity = opacity,
                 widthDp = (104f * scale).dp,
                 heightDp = (34f * scale).dp,
@@ -449,6 +508,7 @@ private fun PortraitHandheldLayout(
                 tracker = tracker,
                 pressedButtons = pressedButtons,
                 onInputChanged = onInputChanged,
+                interactive = interactive,
                 opacity = opacity,
                 sizeDp = (146f * scale).dp,
                 modifier = Modifier.offset(
@@ -471,6 +531,7 @@ private fun PortraitHandheldLayout(
                     tracker = tracker,
                     isPressed = VirtualButton.B in pressedButtons,
                     onInputChanged = onInputChanged,
+                    interactive = interactive,
                     opacity = opacity,
                     diameter = (68f * scale).dp,
                     modifier = Modifier
@@ -482,6 +543,7 @@ private fun PortraitHandheldLayout(
                     tracker = tracker,
                     isPressed = VirtualButton.A in pressedButtons,
                     onInputChanged = onInputChanged,
+                    interactive = interactive,
                     opacity = opacity,
                     diameter = (68f * scale).dp,
                     modifier = Modifier
@@ -501,6 +563,7 @@ private fun PortraitHandheldLayout(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
         ) {
             HandheldMenuButton(
+                interactive = interactive,
                 opacity = opacity,
                 onClick = onOpenMenu,
             )
@@ -511,6 +574,7 @@ private fun PortraitHandheldLayout(
                     tracker = tracker,
                     isPressed = VirtualButton.SELECT in pressedButtons,
                     onInputChanged = onInputChanged,
+                    interactive = interactive,
                     opacity = opacity,
                 )
                 HandheldSmallTouchButton(
@@ -518,6 +582,7 @@ private fun PortraitHandheldLayout(
                     tracker = tracker,
                     isPressed = VirtualButton.START in pressedButtons,
                     onInputChanged = onInputChanged,
+                    interactive = interactive,
                     opacity = opacity,
                 )
             }
@@ -530,12 +595,13 @@ private fun PortraitHandheldLayout(
 }
 
 @Composable
-private fun LandscapeHandheldLayout(
+internal fun LandscapeHandheldLayout(
     tracker: TouchInputTracker,
     pressedButtons: Set<VirtualButton>,
     onInputChanged: () -> Unit,
     profile: TouchLayoutProfile,
     onOpenMenu: () -> Unit,
+    interactive: Boolean = true,
     screenViewport: @Composable () -> Unit,
 ) {
     val opacity = profile.opacity
@@ -563,6 +629,7 @@ private fun LandscapeHandheldLayout(
                     tracker = tracker,
                     isPressed = VirtualButton.L in pressedButtons,
                     onInputChanged = onInputChanged,
+                    interactive = interactive,
                     opacity = opacity,
                     widthDp = (104f * scale).dp,
                     heightDp = (32f * scale).dp,
@@ -573,6 +640,7 @@ private fun LandscapeHandheldLayout(
                     tracker = tracker,
                     pressedButtons = pressedButtons,
                     onInputChanged = onInputChanged,
+                    interactive = interactive,
                     opacity = opacity,
                     sizeDp = (138f * scale).dp,
                     modifier = Modifier.offset(
@@ -581,19 +649,12 @@ private fun LandscapeHandheldLayout(
                     ),
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    HandheldMenuButton(
-                        opacity = opacity,
-                        onClick = onOpenMenu,
-                    )
-                    HandheldSmallTouchButton(
-                        button = VirtualButton.SELECT,
-                        tracker = tracker,
-                        isPressed = VirtualButton.SELECT in pressedButtons,
-                        onInputChanged = onInputChanged,
-                        opacity = opacity,
-                    )
-                }
+                // Reference 02: MENU alone at bottom-left (SELECT lives on the right).
+                HandheldMenuButton(
+                    interactive = interactive,
+                    opacity = opacity,
+                    onClick = onOpenMenu,
+                )
             }
 
             Box(
@@ -620,11 +681,15 @@ private fun LandscapeHandheldLayout(
                     tracker = tracker,
                     isPressed = VirtualButton.R in pressedButtons,
                     onInputChanged = onInputChanged,
+                    interactive = interactive,
                     opacity = opacity,
                     widthDp = (104f * scale).dp,
                     heightDp = (32f * scale).dp,
                     modifier = Modifier.offset(y = profile.shouldersOffsetYdp.dp),
                 )
+
+                // Reference 02: speaker grille at top-right, below R, above A/B.
+                HandheldSpeakerGrille()
 
                 Box(
                     modifier = Modifier
@@ -640,6 +705,7 @@ private fun LandscapeHandheldLayout(
                         tracker = tracker,
                         isPressed = VirtualButton.B in pressedButtons,
                         onInputChanged = onInputChanged,
+                        interactive = interactive,
                         opacity = opacity,
                         diameter = (64f * scale).dp,
                         modifier = Modifier.align(Alignment.BottomStart),
@@ -649,19 +715,32 @@ private fun LandscapeHandheldLayout(
                         tracker = tracker,
                         isPressed = VirtualButton.A in pressedButtons,
                         onInputChanged = onInputChanged,
+                        interactive = interactive,
                         opacity = opacity,
                         diameter = (64f * scale).dp,
                         modifier = Modifier.align(Alignment.TopEnd),
                     )
                 }
 
-                HandheldSmallTouchButton(
-                    button = VirtualButton.START,
-                    tracker = tracker,
-                    isPressed = VirtualButton.START in pressedButtons,
-                    onInputChanged = onInputChanged,
-                    opacity = opacity,
-                )
+                // Reference 02: SELECT + START together at bottom-right.
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    HandheldSmallTouchButton(
+                        button = VirtualButton.SELECT,
+                        tracker = tracker,
+                        isPressed = VirtualButton.SELECT in pressedButtons,
+                        onInputChanged = onInputChanged,
+                        interactive = interactive,
+                        opacity = opacity,
+                    )
+                    HandheldSmallTouchButton(
+                        button = VirtualButton.START,
+                        tracker = tracker,
+                        isPressed = VirtualButton.START in pressedButtons,
+                        onInputChanged = onInputChanged,
+                        interactive = interactive,
+                        opacity = opacity,
+                    )
+                }
             }
         }
     }

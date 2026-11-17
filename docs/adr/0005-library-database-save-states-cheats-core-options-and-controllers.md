@@ -37,6 +37,12 @@ Completing the full MVP (Milestones P3–P7 in `docs/IMPLEMENTATION_PLAN.md`) re
 - Each profile stores preset (`Default`, `Compact`, `Large`, `Custom`), `controlScale` (`0.75f..1.30f`), `controlOpacity` (`0.35f..1.0f`), clamped vertical/horizontal offsets for D-pad, action cluster, shoulders, and system buttons (`-40dp..+40dp`), and `hapticsEnabled`.
 - Clamping guarantees controls can never be moved off-screen or into unusable positions; the layout editor offers live preview, Reset to Preset, and Discard changes.
 
+#### Proposed amendment: global shell tint (owner approval pending)
+
+The Layout screen may customize a single opaque RGB shell colour for both orientations, with classic purple (`6E00FF`) as the default. Presets and a custom hexadecimal value are presentation controls for that one tint, not skin packs or per-button styles. Gameplay and the editor share palette and control rendering. The editor measures the shared layouts at the current window's configuration dimensions and scales the result for display; orientation-specific system insets can differ, so the rotated preview is an estimate and device verification remains required.
+
+Store the normalized value separately in DataStore under `shell_color_hex_v1`. Existing `portrait_layout_v1` and `landscape_layout_v1` eight-field profiles are not modified or migrated. Missing or corrupt values fall back to classic purple; selecting the Classic preset restores it. Older app versions ignore the new key. Rollback can remove the new key or ignore it without changing profiles, saves or ROMs; Android backup remains disabled under the existing app policy. This amendment requires owner review and Android upgrade/relaunch and both-orientation checks before release.
+
 ### 3. Isolated 8-Slot Save States with Thumbnails & Metadata (P5)
 - Stored strictly separately from battery SRAM:
   - `files/saves/<system>/<sha256>/states/slot_<1..8>.state` (raw core serialized bytes)

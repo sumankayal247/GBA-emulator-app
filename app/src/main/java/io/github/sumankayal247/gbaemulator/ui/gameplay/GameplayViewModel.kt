@@ -44,6 +44,8 @@ data class GameplayUiState(
     val saveStateSlots: List<SaveStateSlot> = emptyList(),
     val activeRomCheats: List<CheatCodeEntry> = emptyList(),
     val hasConnectedController: Boolean = false,
+    val hasReceivedGamepadInput: Boolean = false,
+    val gamepadInputSignal: Long = 0L,
     val toastMessage: String? = null,
 ) {
     val isAnyDialogOpen: Boolean
@@ -70,6 +72,14 @@ class GameplayViewModel(
             else libraryRepository.observeCheats(romId)
         }
 
+    private val controllerState = combine(
+        controllerManager.hasConnectedController,
+        controllerManager.hasReceivedGamepadInput,
+        controllerManager.gamepadInputSignal,
+    ) { hasController, hasReceivedInput, inputSignal ->
+        Triple(hasController, hasReceivedInput, inputSignal)
+    }
+
     val uiState: StateFlow<GameplayUiState> = combine(
         combine(
             emulatorSession.snapshot,
@@ -80,16 +90,18 @@ class GameplayViewModel(
             QuadState(session, prefs, dialog, slots)
         },
         activeRomCheatsFlow,
-        controllerManager.hasConnectedController,
+        controllerState,
         toast,
-    ) { quad, cheats, hasController, toastMsg ->
+    ) { quad, cheats, controller, toastMsg ->
         GameplayUiState(
             session = quad.session,
             preferences = quad.prefs,
             activeDialog = quad.dialog,
             saveStateSlots = quad.slots,
             activeRomCheats = cheats,
-            hasConnectedController = hasController,
+            hasConnectedController = controller.first,
+            hasReceivedGamepadInput = controller.second,
+            gamepadInputSignal = controller.third,
             toastMessage = toastMsg ?: quad.session.statusNotice,
         )
     }.stateIn(
@@ -313,6 +325,10 @@ class GameplayViewModel(
             OrientationLock.PORTRAIT
         }
         viewModelScope.launch { preferencesRepository.updateOrientationLock(target) }
+    }
+
+    fun toggleAutoHideTouch(enabled: Boolean) {
+        viewModelScope.launch { preferencesRepository.updateAutoHideTouchWithController(enabled) }
     }
 
     fun toggleScalingMode() {

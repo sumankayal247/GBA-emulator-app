@@ -262,6 +262,7 @@ class MainActivity : ComponentActivity() {
                             onToggleFastForward = gameplayViewModel::toggleFastForward,
                             onToggleOrientationLock = gameplayViewModel::toggleOrientationLock,
                             onToggleScalingMode = gameplayViewModel::toggleScalingMode,
+                            onToggleAutoHideTouch = gameplayViewModel::toggleAutoHideTouch,
                             onDismissToast = gameplayViewModel::dismissToast,
                         )
                     }
@@ -352,6 +353,11 @@ class MainActivity : ComponentActivity() {
                                     onToggleHaptics = { enabled ->
                                         scope.launch {
                                             appContainer.preferencesRepository.updateHapticsEnabled(enabled)
+                                        }
+                                    },
+                                    onSaveShellColor = { color ->
+                                        scope.launch {
+                                            appContainer.preferencesRepository.updateShellColorHex(color)
                                         }
                                     },
                                     modifier = Modifier.padding(innerPadding),

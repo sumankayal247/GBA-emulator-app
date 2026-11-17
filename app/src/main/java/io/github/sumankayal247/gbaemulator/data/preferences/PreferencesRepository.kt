@@ -16,6 +16,7 @@ import io.github.sumankayal247.gbaemulator.domain.model.GameSystem
 import io.github.sumankayal247.gbaemulator.domain.model.OrientationLock
 import io.github.sumankayal247.gbaemulator.domain.model.RomRecord
 import io.github.sumankayal247.gbaemulator.domain.model.ScalingMode
+import io.github.sumankayal247.gbaemulator.domain.model.ShellColors
 import io.github.sumankayal247.gbaemulator.domain.model.TouchLayoutProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -136,6 +137,7 @@ class PreferencesRepository(private val context: Context) {
         val REDUCED_MOTION = booleanPreferencesKey("reduced_motion")
         val PORTRAIT_LAYOUT = stringPreferencesKey("portrait_layout_v1")
         val LANDSCAPE_LAYOUT = stringPreferencesKey("landscape_layout_v1")
+        val SHELL_COLOR_HEX = stringPreferencesKey("shell_color_hex_v1")
         val CONTROLLER_PROFILES = stringPreferencesKey("controller_profiles_v1")
         val RECENT_GAMES = stringPreferencesKey("recent_games_v1")
     }
@@ -161,6 +163,7 @@ class PreferencesRepository(private val context: Context) {
                 reducedMotion = prefs[Keys.REDUCED_MOTION] ?: false,
                 portraitLayout = portrait,
                 landscapeLayout = landscape,
+                shellColorHex = ShellColors.normalized(prefs[Keys.SHELL_COLOR_HEX]),
             )
         }
 
@@ -254,6 +257,11 @@ class PreferencesRepository(private val context: Context) {
         context.emulatorDataStore.edit {
             it[Keys.LANDSCAPE_LAYOUT] = clamped.serialize()
         }
+    }
+
+    suspend fun updateShellColorHex(rawHex: String) {
+        val normalized = ShellColors.normalized(rawHex)
+        context.emulatorDataStore.edit { it[Keys.SHELL_COLOR_HEX] = normalized }
     }
 
     suspend fun upsertControllerProfile(profile: ControllerProfile) {

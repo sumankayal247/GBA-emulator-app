@@ -35,4 +35,5 @@ data class EmulatorPreferences(
     val reducedMotion: Boolean = false,
     val portraitLayout: TouchLayoutProfile = TouchLayoutProfile.defaultPortrait(),
     val landscapeLayout: TouchLayoutProfile = TouchLayoutProfile.defaultLandscape(),
+    val shellColorHex: String = ShellColors.DEFAULT_HEX,
 )
