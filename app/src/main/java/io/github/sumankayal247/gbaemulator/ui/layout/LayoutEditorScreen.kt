@@ -444,16 +444,23 @@ private fun HandheldLayoutPreview(
         ) { measurables, constraints ->
             val realWidth = deviceWidth.dp.roundToPx().coerceAtLeast(1)
             val realHeight = deviceHeight.dp.roundToPx().coerceAtLeast(1)
-            val child = measurables.single().measure(Constraints.fixed(realWidth, realHeight))
+            // Two children by design: the handheld mock and the drag handles. Measuring and
+            // scaling both keeps the handles locked to the controls underneath them. An earlier
+            // version measured only `measurables.single()`, which threw
+            // IllegalArgumentException the moment the second child was added.
             val width = constraints.maxWidth
             val height = constraints.maxHeight
             val scale = minOf(width.toFloat() / realWidth, height.toFloat() / realHeight)
             if (layerScale != scale) layerScale = scale
+            val fixed = Constraints.fixed(realWidth, realHeight)
+            val placeables = measurables.map { it.measure(fixed) }
             layout(width, height) {
-                child.placeRelativeWithLayer(0, 0) {
-                    scaleX = scale
-                    scaleY = scale
-                    transformOrigin = TransformOrigin(0f, 0f)
+                placeables.forEach { placeable ->
+                    placeable.placeRelativeWithLayer(0, 0) {
+                        scaleX = scale
+                        scaleY = scale
+                        transformOrigin = TransformOrigin(0f, 0f)
+                    }
                 }
             }
         }
