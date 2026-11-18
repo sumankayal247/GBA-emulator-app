@@ -54,9 +54,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.github.sumankayal247.gbaemulator.domain.model.CheatCodeEntry
+import io.github.sumankayal247.gbaemulator.domain.model.ControlAnchorsDefaults
+import io.github.sumankayal247.gbaemulator.domain.model.ControlPlacement
+import io.github.sumankayal247.gbaemulator.domain.model.ControlSlot
+import io.github.sumankayal247.gbaemulator.domain.model.ControlZone
 import io.github.sumankayal247.gbaemulator.domain.model.EmulatorState
 import io.github.sumankayal247.gbaemulator.domain.model.GameSystem
 import io.github.sumankayal247.gbaemulator.domain.model.OrientationLock
+import io.github.sumankayal247.gbaemulator.domain.model.ResolvedControl
 import io.github.sumankayal247.gbaemulator.domain.model.TouchLayoutProfile
 import io.github.sumankayal247.gbaemulator.domain.model.VirtualButton
 import io.github.sumankayal247.gbaemulator.emulator.TouchInputTracker
@@ -428,56 +433,38 @@ private fun GameViewportSurface(
 }
 
 /**
- * How large the portrait controls can be before they start squeezing the viewport.
+ * The region of the handheld that controls may be dragged within, in device dp.
  *
- * The viewport is locked to 3:2 and takes the full width, so its height is decided by the device
- * width, not by preference. On short or narrow windows the control band would then overlap the
- * screen or spill off the bottom edge, so it shrinks [PORTRAIT_MIN_CONTROL_SCALE]..1 of the
- * user's requested scale. The band height is not constant in `scale` (the shoulder buttons and
- * D-pad both scale, the bottom label row does not), hence the explicit solve below.
+ * Sharing one function between gameplay and the layout editor is what guarantees the control you
+ * drag in the editor lands in the same place in game. The zoom-out preview measures at real device
+ * dp and scales, so both paths resolve against identical numbers.
  */
-internal fun portraitControlScale(
-    requestedScale: Float,
-    windowWidthDp: Float,
-    windowHeightDp: Float,
-): Float {
-    if (windowWidthDp <= 0f || windowHeightDp <= 0f) return requestedScale
-    if (requestedScale <= 0f) return 1f
-    // A request already under the floor is the user's explicit choice, so honour it.
-    if (requestedScale <= PORTRAIT_MIN_CONTROL_SCALE) return requestedScale
-    val viewportHeight = (windowWidthDp - 2f * PORTRAIT_HORIZONTAL_INSET_DP) / GBA_SCREEN_ASPECT
-    val roomForControls = windowHeightDp - viewportHeight - PORTRAIT_CHROME_DP
-    // Band height = SLOPE * scale, so the largest affordable scale is a straight solve.
-    val affordable = roomForControls / PORTRAIT_CONTROL_BAND_SLOPE_DP
-    return affordable.coerceIn(PORTRAIT_MIN_CONTROL_SCALE, requestedScale)
+internal fun portraitControlZone(windowWidthDp: Float, windowHeightDp: Float): ControlZone {
+    val bezel = portraitBezelHeightDpForWindow(windowWidthDp, windowHeightDp)
+    val height = (windowHeightDp - bezel - PORTRAIT_CHROME_DP).coerceAtLeast(1f)
+    val width = (windowWidthDp - 2f * PORTRAIT_HORIZONTAL_INSET_DP).coerceAtLeast(1f)
+    return ControlZone(width, height)
 }
 
-/** Column padding, gaps and the fixed-size bottom label row, in dp. */
-internal const val PORTRAIT_CHROME_DP = 89f
+/** Landscape lets controls use the whole window; the screen floats in the middle. */
+internal fun landscapeControlZone(windowWidthDp: Float, windowHeightDp: Float): ControlZone =
+    ControlZone(
+        (windowWidthDp - 2f * LANDSCAPE_INSET_DP).coerceAtLeast(1f),
+        (windowHeightDp - 2f * LANDSCAPE_INSET_DP).coerceAtLeast(1f),
+    )
 
-/**
- * Height of the portrait control band per unit of `scale`: the D-pad (146 dp) dominates the
- * A-B block (128 dp) and the shoulder row adds another 34 dp.
- */
-internal const val PORTRAIT_CONTROL_BAND_SLOPE_DP = 180f
-
-/** Portrait D-pad size and the A-B bounding box at `scale = 1.0`. */
+/** Portrait control sizes at `scale = 1.0`. */
 private const val PORTRAIT_DPAD_DP = 146f
-private const val PORTRAIT_AB_BOX_WIDTH_DP = 154f
-private const val PORTRAIT_AB_BOX_HEIGHT_DP = 128f
 
-/** Never shrink the portrait controls past this, however short the window is. */
-private const val PORTRAIT_MIN_CONTROL_SCALE = 0.82f
+/** Control sizes at `scale = 1.0`, matched to the reference handheld's proportions. */
+internal const val PORTRAIT_ACTION_DP = 68f
+internal const val LANDSCAPE_DPAD_DP = 138f
+internal const val LANDSCAPE_ACTION_DP = 64f
+internal const val SHOULDER_WIDTH_DP = 104f
+internal const val SHOULDER_HEIGHT_DP = 36f
 
-/** Horizontal padding of the portrait column. */
-internal const val PORTRAIT_HORIZONTAL_INSET_DP = 8f
-
-/**
- * Native GBA aspect ratio (240x160). The portrait viewport box is locked to it so the SurfaceView
- * is already the right shape; `GlVideoRenderer` then fills it edge to edge instead of
- * letterboxing inside a box of some other ratio.
- */
-internal const val GBA_SCREEN_ASPECT = 1.5f
+/** Landscape keeps the screen clear of the side control columns. */
+internal const val LANDSCAPE_SCREEN_INSET_DP = 96f
 
 @Composable
 internal fun PortraitHandheldLayout(
@@ -489,15 +476,11 @@ internal fun PortraitHandheldLayout(
     interactive: Boolean = true,
     screenViewport: @Composable () -> Unit,
 ) {
-    val opacity = profile.opacity
-    // The user's slider stays the ceiling; on short screens the controls give height back to the
-    // viewport instead of squeezing it or spilling off the bottom of the window.
-    val windowConfiguration = LocalConfiguration.current
-    val scale = portraitControlScale(
-        requestedScale = profile.scale,
-        windowWidthDp = windowConfiguration.screenWidthDp.toFloat(),
-        windowHeightDp = windowConfiguration.screenHeightDp.toFloat(),
-    )
+    val configuration = LocalConfiguration.current
+    val windowWidth = configuration.screenWidthDp.toFloat()
+    val windowHeight = configuration.screenHeightDp.toFloat()
+    val scale = portraitControlScale(profile.scale, windowWidth, windowHeight)
+    val zone = portraitControlZone(windowWidth, windowHeight)
 
     Column(
         modifier = Modifier
@@ -505,155 +488,199 @@ internal fun PortraitHandheldLayout(
             .padding(horizontal = PORTRAIT_HORIZONTAL_INSET_DP.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // The screen sits flush at the top and takes the full width: at 3:2 that is the largest
-        // the game can be without stretching or cropping, because 3:2 fixes height = width/1.5.
-        // It is deliberately *not* centred inside a weighted slot: on a tall phone that left a
-        // dead shell band above the viewport (the gap the owner circled), with the game floating
-        // in the middle of the shell.
-        Box(
+        // Bezel-framed screen, flush to the top. The frame keeps the reference aspect while the
+        // game inside is letterboxed at its native 3:2, so nothing is stretched.
+        BezelScreenFrame(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(GBA_SCREEN_ASPECT),
+                .height(portraitBezelHeightDpForWindow(windowWidth, windowHeight).dp),
         ) {
             screenViewport()
         }
 
         Spacer(Modifier.height(6.dp))
 
-        Row(
-            horizontalArrangement = Arrangement.SpaceBetween,
+        // Free-form control zone. Controls are absolutely placed by fraction, which is what
+        // removes the old dead band: nothing here is pinned to the bottom of the column.
+        HandheldControlZone(
+            zone = zone,
+            profile = profile,
+            landscape = false,
+            scale = scale,
+            tracker = tracker,
+            pressedButtons = pressedButtons,
+            onInputChanged = onInputChanged,
+            onOpenMenu = onOpenMenu,
+            interactive = interactive,
             modifier = Modifier
                 .fillMaxWidth()
-                .offset(y = profile.shouldersOffsetYdp.dp)
-                .padding(horizontal = 6.dp),
-        ) {
+                .weight(1f),
+        )
+
+        // Speaker engraving along the bottom edge of the shell.
+        HandheldLabelRow()
+    }
+}
+
+/**
+ * Absolutely positions every control inside [zone] from the profile's fractional anchors.
+ *
+ * One box per slot, placed with [Modifier.offset] in dp against a measured parent. Using offset
+ * rather than a layout pass keeps the controls independent of each other: dragging the D-pad
+ * cannot reflow the buttons, which is what made the old Row/Column arrangement impossible to
+ * rearrange freely.
+ */
+@Composable
+internal fun HandheldControlZone(
+    zone: ControlZone,
+    profile: TouchLayoutProfile,
+    landscape: Boolean,
+    scale: Float,
+    tracker: TouchInputTracker,
+    pressedButtons: Set<VirtualButton>,
+    onInputChanged: () -> Unit,
+    onOpenMenu: () -> Unit,
+    interactive: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val opacity = profile.opacity
+    val resolved = ControlPlacement.resolveAll(
+        zone = zone,
+        anchors = profile.anchors,
+        defaults = ControlAnchorsDefaults.forOrientation(landscape),
+        scale = scale,
+    )
+    val dpadSize = if (landscape) LANDSCAPE_DPAD_DP else PORTRAIT_DPAD_DP
+    val actionDiameter = if (landscape) LANDSCAPE_ACTION_DP else PORTRAIT_ACTION_DP
+
+    Box(modifier = modifier) {
+        // Shoulders.
+        SlotBox(resolved, ControlSlot.SHOULDER_L) {
             HandheldShoulderButton(
-                button = VirtualButton.L,
-                isLeftShoulder = true,
-                tracker = tracker,
-                isPressed = VirtualButton.L in pressedButtons,
-                onInputChanged = onInputChanged,
-                interactive = interactive,
-                opacity = opacity,
-                widthDp = (104f * scale).dp,
-                heightDp = (34f * scale).dp,
+                button = VirtualButton.L, isLeftShoulder = true, tracker = tracker,
+                isPressed = VirtualButton.L in pressedButtons, onInputChanged = onInputChanged,
+                interactive = interactive, opacity = opacity,
+                widthDp = (SHOULDER_WIDTH_DP * scale).dp, heightDp = (SHOULDER_HEIGHT_DP * scale).dp,
             )
+        }
+        SlotBox(resolved, ControlSlot.SHOULDER_R) {
             HandheldShoulderButton(
-                button = VirtualButton.R,
-                isLeftShoulder = false,
-                tracker = tracker,
-                isPressed = VirtualButton.R in pressedButtons,
-                onInputChanged = onInputChanged,
-                interactive = interactive,
-                opacity = opacity,
-                widthDp = (104f * scale).dp,
-                heightDp = (34f * scale).dp,
+                button = VirtualButton.R, isLeftShoulder = false, tracker = tracker,
+                isPressed = VirtualButton.R in pressedButtons, onInputChanged = onInputChanged,
+                interactive = interactive, opacity = opacity,
+                widthDp = (SHOULDER_WIDTH_DP * scale).dp, heightDp = (SHOULDER_HEIGHT_DP * scale).dp,
             )
         }
 
-        // Whatever vertical space the 3:2 screen cannot use is spent here, between the shoulder
-        // row and the thumb controls, so the screen stays at the top and the controls stay within
-        // thumb reach at the bottom (as in the reference hardware).
-        Spacer(Modifier.weight(1f))
-
-        // Fixed-height control block: the D-pad sets the row height so the screen above keeps a
-        // stable share of the window regardless of how tall the phone is.
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-        ) {
+        // D-pad.
+        SlotBox(resolved, ControlSlot.DPAD) {
             HandheldDPad(
-                tracker = tracker,
-                pressedButtons = pressedButtons,
-                onInputChanged = onInputChanged,
-                interactive = interactive,
-                opacity = opacity,
-                sizeDp = (PORTRAIT_DPAD_DP * scale).dp,
-                modifier = Modifier.offset(
-                    x = profile.dpadOffsetXdp.dp,
-                    y = profile.dpadOffsetYdp.dp,
-                ),
+                tracker = tracker, pressedButtons = pressedButtons,
+                onInputChanged = onInputChanged, interactive = interactive, opacity = opacity,
+                sizeDp = (dpadSize * scale).dp,
             )
-
-            Box(
-                modifier = Modifier
-                    .width((PORTRAIT_AB_BOX_WIDTH_DP * scale).dp)
-                    .height((PORTRAIT_AB_BOX_HEIGHT_DP * scale).dp)
-                    .offset(
-                        x = profile.buttonsOffsetXdp.dp,
-                        y = profile.buttonsOffsetYdp.dp,
-                    ),
-            ) {
-                // A sits low and inboard, B sits high and outboard: the owner's direction for
-                // this round, matching the handheld they pointed at.
-                HandheldActionButton(
-                    button = VirtualButton.A,
-                    tracker = tracker,
-                    isPressed = VirtualButton.A in pressedButtons,
-                    onInputChanged = onInputChanged,
-                    interactive = interactive,
-                    opacity = opacity,
-                    diameter = (68f * scale).dp,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .offset(x = 2.dp, y = (-4).dp),
-                )
-                HandheldActionButton(
-                    button = VirtualButton.B,
-                    tracker = tracker,
-                    isPressed = VirtualButton.B in pressedButtons,
-                    onInputChanged = onInputChanged,
-                    interactive = interactive,
-                    opacity = opacity,
-                    diameter = (68f * scale).dp,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = (-2).dp, y = 4.dp),
-                )
-            }
         }
 
-        Spacer(Modifier.height(8.dp))
+        // Action buttons.
+        SlotBox(resolved, ControlSlot.BUTTON_A) {
+            HandheldActionButton(
+                button = VirtualButton.A, tracker = tracker,
+                isPressed = VirtualButton.A in pressedButtons, onInputChanged = onInputChanged,
+                interactive = interactive, opacity = opacity,
+                diameter = (actionDiameter * scale).dp,
+            )
+        }
+        SlotBox(resolved, ControlSlot.BUTTON_B) {
+            HandheldActionButton(
+                button = VirtualButton.B, tracker = tracker,
+                isPressed = VirtualButton.B in pressedButtons, onInputChanged = onInputChanged,
+                interactive = interactive, opacity = opacity,
+                diameter = (actionDiameter * scale).dp,
+            )
+        }
 
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.SpaceBetween,
+        // Small buttons.
+        SlotBox(resolved, ControlSlot.MENU) {
+            HandheldMenuButton(interactive = interactive, opacity = opacity, onClick = onOpenMenu)
+        }
+        SlotBox(resolved, ControlSlot.SELECT) {
+            HandheldSmallTouchButton(
+                button = VirtualButton.SELECT, tracker = tracker,
+                isPressed = VirtualButton.SELECT in pressedButtons, onInputChanged = onInputChanged,
+                interactive = interactive, opacity = opacity,
+            )
+        }
+        SlotBox(resolved, ControlSlot.START) {
+            HandheldSmallTouchButton(
+                button = VirtualButton.START, tracker = tracker,
+                isPressed = VirtualButton.START in pressedButtons, onInputChanged = onInputChanged,
+                interactive = interactive, opacity = opacity,
+            )
+        }
+    }
+}
+
+/** Places one slot's content centred on its resolved position. */
+@Composable
+private fun SlotBox(
+    resolved: Map<ControlSlot, ResolvedControl>,
+    slot: ControlSlot,
+    content: @Composable () -> Unit,
+) {
+    val r = resolved.getValue(slot)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .offset(
+                x = (r.centerXDp - r.halfWidthDp).dp,
+                y = (r.centerYDp - r.halfHeightDp).dp,
+            )
+            .size(width = (r.halfWidthDp * 2f).dp, height = (r.halfHeightDp * 2f).dp),
+    ) {
+        content()
+    }
+}
+
+/**
+ * The black screen frame.
+ *
+ * Sized to [SCREEN_BEZEL_ASPECT], which is taller than the game's 3:2. The viewport is centred
+ * inside it and constrained to [GBA_SCREEN_ASPECT], so the extra height becomes top and bottom
+ * bezel exactly as on the reference handheld, and the 240x160 image is never distorted.
+ */
+@Composable
+private fun BezelScreenFrame(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val palette = LocalHandheldPalette.current
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(palette.bezel),
+    ) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .aspectRatio(GBA_SCREEN_ASPECT),
         ) {
-            HandheldMenuButton(
-                interactive = interactive,
-                opacity = opacity,
-                onClick = onOpenMenu,
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                HandheldSmallTouchButton(
-                    button = VirtualButton.SELECT,
-                    tracker = tracker,
-                    isPressed = VirtualButton.SELECT in pressedButtons,
-                    onInputChanged = onInputChanged,
-                    interactive = interactive,
-                    opacity = opacity,
-                )
-                HandheldSmallTouchButton(
-                    button = VirtualButton.START,
-                    tracker = tracker,
-                    isPressed = VirtualButton.START in pressedButtons,
-                    onInputChanged = onInputChanged,
-                    interactive = interactive,
-                    opacity = opacity,
-                )
-            }
-
-            HandheldSpeakerGrille(
-                modifier = Modifier.size(width = 76.dp, height = 52.dp),
-            )
+            content()
         }
+    }
+}
+
+/** Speaker engraving along the bottom of the shell, mirroring the reference hardware. */
+@Composable
+private fun HandheldLabelRow() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.End,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        HandheldSpeakerGrille(modifier = Modifier.size(width = 76.dp, height = 40.dp))
     }
 }
 
@@ -667,147 +694,44 @@ internal fun LandscapeHandheldLayout(
     interactive: Boolean = true,
     screenViewport: @Composable () -> Unit,
 ) {
-    val opacity = profile.opacity
+    val configuration = LocalConfiguration.current
+    val windowWidth = configuration.screenWidthDp.toFloat()
+    val windowHeight = configuration.screenHeightDp.toFloat()
     val scale = profile.scale
+    val zone = landscapeControlZone(windowWidth, windowHeight)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+        // Screen centred behind the controls, letterboxed at the native ratio.
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .padding(horizontal = LANDSCAPE_SCREEN_INSET_DP.dp, vertical = 8.dp),
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width((164f * scale).dp)
-                    .padding(vertical = 8.dp),
-            ) {
-                HandheldShoulderButton(
-                    button = VirtualButton.L,
-                    isLeftShoulder = true,
-                    tracker = tracker,
-                    isPressed = VirtualButton.L in pressedButtons,
-                    onInputChanged = onInputChanged,
-                    interactive = interactive,
-                    opacity = opacity,
-                    widthDp = (104f * scale).dp,
-                    heightDp = (32f * scale).dp,
-                    modifier = Modifier.offset(y = profile.shouldersOffsetYdp.dp),
-                )
-
-                HandheldDPad(
-                    tracker = tracker,
-                    pressedButtons = pressedButtons,
-                    onInputChanged = onInputChanged,
-                    interactive = interactive,
-                    opacity = opacity,
-                    sizeDp = (138f * scale).dp,
-                    modifier = Modifier.offset(
-                        x = profile.dpadOffsetXdp.dp,
-                        y = profile.dpadOffsetYdp.dp,
-                    ),
-                )
-
-                // Reference 02: MENU alone at bottom-left (SELECT lives on the right).
-                HandheldMenuButton(
-                    interactive = interactive,
-                    opacity = opacity,
-                    onClick = onOpenMenu,
-                )
-            }
-
             Box(
-                contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .weight(1f)
                     .fillMaxHeight()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .aspectRatio(GBA_SCREEN_ASPECT)
+                    .clip(RoundedCornerShape(10.dp)),
             ) {
                 screenViewport()
             }
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width((164f * scale).dp)
-                    .padding(vertical = 8.dp),
-            ) {
-                HandheldShoulderButton(
-                    button = VirtualButton.R,
-                    isLeftShoulder = false,
-                    tracker = tracker,
-                    isPressed = VirtualButton.R in pressedButtons,
-                    onInputChanged = onInputChanged,
-                    interactive = interactive,
-                    opacity = opacity,
-                    widthDp = (104f * scale).dp,
-                    heightDp = (32f * scale).dp,
-                    modifier = Modifier.offset(y = profile.shouldersOffsetYdp.dp),
-                )
-
-                // Reference 02: speaker grille at top-right, below R, above A/B.
-                HandheldSpeakerGrille()
-
-                Box(
-                    modifier = Modifier
-                        .width((148f * scale).dp)
-                        .height((122f * scale).dp)
-                        .offset(
-                            x = profile.buttonsOffsetXdp.dp,
-                            y = profile.buttonsOffsetYdp.dp,
-                        ),
-                ) {
-                    // Same diagonal as portrait (and as the hardware): A low and inboard,
-                    // B high and outboard.
-                    HandheldActionButton(
-                        button = VirtualButton.A,
-                        tracker = tracker,
-                        isPressed = VirtualButton.A in pressedButtons,
-                        onInputChanged = onInputChanged,
-                        interactive = interactive,
-                        opacity = opacity,
-                        diameter = (64f * scale).dp,
-                        modifier = Modifier.align(Alignment.BottomStart),
-                    )
-                    HandheldActionButton(
-                        button = VirtualButton.B,
-                        tracker = tracker,
-                        isPressed = VirtualButton.B in pressedButtons,
-                        onInputChanged = onInputChanged,
-                        interactive = interactive,
-                        opacity = opacity,
-                        diameter = (64f * scale).dp,
-                        modifier = Modifier.align(Alignment.TopEnd),
-                    )
-                }
-
-                // Reference 02: SELECT + START together at bottom-right.
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    HandheldSmallTouchButton(
-                        button = VirtualButton.SELECT,
-                        tracker = tracker,
-                        isPressed = VirtualButton.SELECT in pressedButtons,
-                        onInputChanged = onInputChanged,
-                        interactive = interactive,
-                        opacity = opacity,
-                    )
-                    HandheldSmallTouchButton(
-                        button = VirtualButton.START,
-                        tracker = tracker,
-                        isPressed = VirtualButton.START in pressedButtons,
-                        onInputChanged = onInputChanged,
-                        interactive = interactive,
-                        opacity = opacity,
-                    )
-                }
-            }
         }
+
+        HandheldControlZone(
+            zone = zone,
+            profile = profile,
+            landscape = true,
+            scale = scale,
+            tracker = tracker,
+            pressedButtons = pressedButtons,
+            onInputChanged = onInputChanged,
+            onOpenMenu = onOpenMenu,
+            interactive = interactive,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(LANDSCAPE_INSET_DP.dp),
+        )
     }
 }
 
