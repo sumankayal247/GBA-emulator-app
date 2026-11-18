@@ -453,13 +453,13 @@ internal fun portraitControlScale(
 }
 
 /** Column padding, gaps and the fixed-size bottom label row, in dp. */
-private const val PORTRAIT_CHROME_DP = 89f
+internal const val PORTRAIT_CHROME_DP = 89f
 
 /**
  * Height of the portrait control band per unit of `scale`: the D-pad (146 dp) dominates the
  * A-B block (128 dp) and the shoulder row adds another 34 dp.
  */
-private const val PORTRAIT_CONTROL_BAND_SLOPE_DP = 180f
+internal const val PORTRAIT_CONTROL_BAND_SLOPE_DP = 180f
 
 /** Portrait D-pad size and the A-B bounding box at `scale = 1.0`. */
 private const val PORTRAIT_DPAD_DP = 146f
@@ -470,14 +470,14 @@ private const val PORTRAIT_AB_BOX_HEIGHT_DP = 128f
 private const val PORTRAIT_MIN_CONTROL_SCALE = 0.82f
 
 /** Horizontal padding of the portrait column. */
-private const val PORTRAIT_HORIZONTAL_INSET_DP = 8f
+internal const val PORTRAIT_HORIZONTAL_INSET_DP = 8f
 
 /**
  * Native GBA aspect ratio (240x160). The portrait viewport box is locked to it so the SurfaceView
  * is already the right shape; `GlVideoRenderer` then fills it edge to edge instead of
  * letterboxing inside a box of some other ratio.
  */
-private const val GBA_SCREEN_ASPECT = 1.5f
+internal const val GBA_SCREEN_ASPECT = 1.5f
 
 @Composable
 internal fun PortraitHandheldLayout(

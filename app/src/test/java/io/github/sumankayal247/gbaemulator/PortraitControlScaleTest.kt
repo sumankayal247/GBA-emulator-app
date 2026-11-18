@@ -1,5 +1,9 @@
 package io.github.sumankayal247.gbaemulator
 
+import io.github.sumankayal247.gbaemulator.ui.gameplay.GBA_SCREEN_ASPECT
+import io.github.sumankayal247.gbaemulator.ui.gameplay.PORTRAIT_CHROME_DP
+import io.github.sumankayal247.gbaemulator.ui.gameplay.PORTRAIT_CONTROL_BAND_SLOPE_DP
+import io.github.sumankayal247.gbaemulator.ui.gameplay.PORTRAIT_HORIZONTAL_INSET_DP
 import io.github.sumankayal247.gbaemulator.ui.gameplay.portraitControlScale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -84,8 +88,12 @@ class PortraitControlScaleTest {
             411f to 891f,
         ).forEach { (w, h) ->
             val scale = portraitControlScale(1f, w, h)
-            val viewportHeight = (w - 16f) / 1.5f
-            val total = viewportHeight + 180f * scale + 91f
+            // Derived from the real constants, not copies: a hardcoded duplicate of the chrome
+            // budget is exactly what let this assertion drift out of step with the layout.
+            val viewportHeight =
+                (w - 2f * PORTRAIT_HORIZONTAL_INSET_DP) / GBA_SCREEN_ASPECT
+            val total =
+                viewportHeight + PORTRAIT_CONTROL_BAND_SLOPE_DP * scale + PORTRAIT_CHROME_DP
             assertTrue("viewport + controls overflowed at ${w}x$h (total $total)", total <= h + 0.01f)
         }
     }
