@@ -6,34 +6,32 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.GenericShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
@@ -48,12 +46,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.sumankayal247.gbaemulator.domain.model.VirtualButton
 import io.github.sumankayal247.gbaemulator.emulator.TouchInputTracker
-import io.github.sumankayal247.gbaemulator.ui.theme.EmulatorColors
 
 /**
- * Sculpted 8-way multi-touch D-pad supporting diagonals and smooth thumb sliding (ADR-0003).
- * The layered rim, cast shadow, concave dimple and directional triangles are drawn rather than
- * assembled from a labelled Material button, so the control reads as real handheld hardware.
+ * Moulded-plastic 8-way multi-touch D-pad supporting diagonals and smooth thumb sliding
+ * (ADR-0003).
+ *
+ * The control is drawn as real hardware rather than a labelled Material button: a soft cast
+ * shadow, a raised cross body (the "lip"), a recessed face plate with a bevelled groove, a
+ * dished thumb dimple and engraved directional triangles. Every outline comes from
+ * [HandheldControlGeometry] so the silhouette can be unit-tested; drawing the body as two
+ * overlapping rounded bars is what previously left the arms looking clipped and deformed.
  */
 @Composable
 fun HandheldDPad(
@@ -67,187 +69,151 @@ fun HandheldDPad(
 ) {
     val palette = LocalHandheldPalette.current
     val anyDirectionPressed = DIRECTION_BUTTONS.any { it in pressedButtons }
-    val pressScale = if (anyDirectionPressed) 0.985f else 1f
+    // One Shape drives the drop shadow, so it has to trace the same moulded outline the Canvas
+    // fills. Remembered because the outline is rebuilt per draw otherwise.
+    val shape: Shape = remember {
+        GenericShape { size, _ -> addPath(HandheldControlGeometry.dpadBodyPath(size)) }
+    }
 
     Box(
         modifier = modifier
             .size(sizeDp)
-            .graphicsLayer(
-                scaleX = pressScale,
-                scaleY = pressScale,
-                translationY = if (anyDirectionPressed) 2f else 0f,
-            )
+            .graphicsLayer {
+                val pressedDepth = if (anyDirectionPressed) 0.988f else 1f
+                scaleX = pressedDepth
+                scaleY = pressedDepth
+                translationY = if (anyDirectionPressed) 1.5f else 0f
+            }
             .alpha(opacity)
             .shadow(
-                elevation = if (anyDirectionPressed) 3.dp else 10.dp,
-                shape = HandheldDPadShape,
+                elevation = if (anyDirectionPressed) 3.dp else 9.dp,
+                shape = shape,
                 clip = false,
                 ambientColor = palette.castShadow,
                 spotColor = palette.castShadow,
             )
-            .clip(HandheldDPadShape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(palette.buttonRimLight, palette.buttonRimMid, palette.buttonRimDark),
-                ),
-                HandheldDPadShape,
-            )
-            .border(2.dp, palette.buttonOutline, HandheldDPadShape)
             .semantics { contentDescription = "Directional pad" }
             .handheldDpadGestures(interactive, tracker, onInputChanged),
     ) {
-        Canvas(
-            modifier = Modifier
-                .matchParentSize()
-                .padding(3.dp)
-                .clip(HandheldDPadShape),
-        ) {
+        Canvas(modifier = Modifier.matchParentSize()) {
             val w = size.width
             val h = size.height
-            val arm = w * 0.34f
-            val crossOffset = (w - arm) / 2f
-            val corner = CornerRadius(w * 0.07f, w * 0.07f)
-            val center = Offset(w * 0.5f, h * 0.5f)
-            val bodyBrush = if (anyDirectionPressed) {
+            val body = HandheldControlGeometry.dpadBodyPath(size)
+            val face = HandheldControlGeometry.dpadFacePath(size)
+            val rimPx = minOf(w, h) * HandheldControlGeometry.DPAD_FACE_INSET_FRACTION
+
+            // 1. Raised body. A vertical gradient from a lit top edge to a shadowed bottom edge
+            //    is what makes the lip read as a physical step around the face plate.
+            drawPath(
+                path = body,
+                brush = Brush.verticalGradient(
+                    0f to palette.controlLipTop,
+                    0.55f to palette.controlFaceTop,
+                    1f to palette.controlLipBottom,
+                ),
+            )
+            // Darken the very bottom of the lip so the plate sits on a visible shelf.
+            drawPath(
+                path = body,
+                brush = Brush.verticalGradient(
+                    0.82f to Color.Transparent,
+                    1f to palette.controlEdgeShade,
+                ),
+            )
+
+            // 2. Recessed face plate, lit from the top-left like the reference hardware.
+            val faceBrush = if (anyDirectionPressed) {
                 Brush.verticalGradient(
-                    listOf(palette.buttonFace, palette.buttonFacePressed, palette.buttonShadow),
+                    0f to palette.controlFacePressedTop,
+                    1f to palette.controlFacePressedBottom,
                 )
             } else {
                 Brush.verticalGradient(
-                    listOf(palette.buttonHighlight, palette.buttonFace, palette.buttonShadow),
+                    0f to palette.controlFaceTop,
+                    0.62f to palette.controlFaceBottom,
+                    1f to palette.controlFacePressedBottom,
+                )
+            }
+            drawPath(path = face, brush = faceBrush)
+
+            // 3. Bevel: bright along the top/left of the plate, shaded along the bottom/right.
+            drawPath(
+                path = face,
+                color = palette.controlEdgeLight,
+                style = Stroke(width = maxOf(1f, rimPx * 0.30f)),
+            )
+            drawPath(
+                path = face,
+                brush = Brush.verticalGradient(
+                    0.55f to Color.Transparent,
+                    1f to palette.controlEdgeShade,
+                ),
+                style = Stroke(width = maxOf(1f, rimPx * 0.62f)),
+            )
+            // Hairline groove where the plate meets the lip.
+            drawPath(
+                path = body,
+                color = palette.controlGroove,
+                style = Stroke(width = maxOf(1f, rimPx * 0.22f)),
+            )
+
+            // 4. Engraved directional triangles. The sunk cut is sold by a lighter fill that
+            //    peeks out below the ink, so only the lower edges catch the light (an outline
+            //    around the whole glyph would read as a printed sticker instead of a moulding).
+            val engraveDrop = maxOf(0.9f, rimPx * 0.20f)
+            DpadDirection.entries.forEach { direction ->
+                val button = direction.toVirtualButton()
+                val arrow = HandheldControlGeometry.arrowPath(size, direction)
+                translate(0f, engraveDrop) {
+                    drawPath(path = arrow, color = palette.controlEngraveShadow)
+                }
+                drawPath(
+                    path = arrow,
+                    color = if (button in pressedButtons) {
+                        palette.controlEngravePressed
+                    } else {
+                        palette.controlEngrave
+                    },
                 )
             }
 
-            // Two intersecting rounded bars form the raised plastic cross.
-            drawRoundRect(
-                brush = bodyBrush,
-                topLeft = Offset(crossOffset, 0f),
-                size = Size(arm, h),
-                cornerRadius = corner,
-            )
-            drawRoundRect(
-                brush = bodyBrush,
-                topLeft = Offset(0f, crossOffset),
-                size = Size(w, arm),
-                cornerRadius = corner,
-            )
-
-            // Long specular highlight and lower bevel sell the rounded 3D face.
-            drawRoundRect(
-                color = Color.White.copy(alpha = 0.38f),
-                topLeft = Offset(crossOffset + 3f, 3f),
-                size = Size(arm - 6f, crossOffset - 4f),
-                cornerRadius = corner,
-            )
-            drawRoundRect(
-                color = palette.buttonShadow.copy(alpha = 0.24f),
-                topLeft = Offset(crossOffset + 3f, crossOffset + arm + 2f),
-                size = Size(arm - 6f, crossOffset - 5f),
-                cornerRadius = corner,
-            )
-
-            val pressedTint = EmulatorColors.AccentBlue.copy(alpha = 0.28f)
-            if (VirtualButton.UP in pressedButtons) {
-                drawRoundRect(
-                    color = pressedTint,
-                    topLeft = Offset(crossOffset + 2f, 3f),
-                    size = Size(arm - 4f, crossOffset - 3f),
-                    cornerRadius = corner,
-                )
-            }
-            if (VirtualButton.DOWN in pressedButtons) {
-                drawRoundRect(
-                    color = pressedTint,
-                    topLeft = Offset(crossOffset + 2f, crossOffset + arm),
-                    size = Size(arm - 4f, crossOffset - 3f),
-                    cornerRadius = corner,
-                )
-            }
-            if (VirtualButton.LEFT in pressedButtons) {
-                drawRoundRect(
-                    color = pressedTint,
-                    topLeft = Offset(3f, crossOffset + 2f),
-                    size = Size(crossOffset - 3f, arm - 4f),
-                    cornerRadius = corner,
-                )
-            }
-            if (VirtualButton.RIGHT in pressedButtons) {
-                drawRoundRect(
-                    color = pressedTint,
-                    topLeft = Offset(crossOffset + arm, crossOffset + 2f),
-                    size = Size(crossOffset - 3f, arm - 4f),
-                    cornerRadius = corner,
-                )
-            }
-
-            // Concave thumb dimple with a polished inner ring.
+            // 5. Dished thumb dimple with a polished inner wall.
+            val dimpleRadius = minOf(w, h) * HandheldControlGeometry.DPAD_ARM_FRACTION *
+                HandheldControlGeometry.DPAD_DIMPLE_RADIUS_FRACTION
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(palette.buttonShadow, palette.buttonFace),
-                    center = center,
-                    radius = arm * 0.48f,
+                    colors = listOf(palette.controlFacePressedBottom, palette.controlLipBottom),
+                    center = Offset(w * 0.5f, h * 0.5f),
+                    radius = dimpleRadius,
                 ),
-                radius = arm * 0.32f,
-                center = center,
+                radius = dimpleRadius,
+                center = Offset(w * 0.5f, h * 0.5f),
             )
             drawCircle(
-                color = Color.White.copy(alpha = 0.48f),
-                radius = arm * 0.31f,
-                center = center,
-                style = Stroke(width = 1.2.dp.toPx()),
+                color = palette.controlEdgeLight,
+                radius = dimpleRadius,
+                center = Offset(w * 0.5f, h * 0.5f),
+                style = Stroke(width = maxOf(1f, rimPx * 0.22f)),
             )
             drawCircle(
-                color = palette.buttonOutline.copy(alpha = 0.36f),
-                radius = arm * 0.34f,
-                center = center,
-                style = Stroke(width = 1.dp.toPx()),
-            )
-
-            fun arrowColor(btn: VirtualButton) =
-                if (btn in pressedButtons) EmulatorColors.AccentBlue else palette.buttonLabel
-
-            val arrowSize = arm * 0.28f
-            drawPath(
-                Path().apply {
-                    moveTo(w * 0.5f, h * 0.11f)
-                    lineTo(w * 0.5f - arrowSize, h * 0.11f + arrowSize * 1.4f)
-                    lineTo(w * 0.5f + arrowSize, h * 0.11f + arrowSize * 1.4f)
-                    close()
-                },
-                color = arrowColor(VirtualButton.UP),
-            )
-            drawPath(
-                Path().apply {
-                    moveTo(w * 0.5f, h * 0.89f)
-                    lineTo(w * 0.5f - arrowSize, h * 0.89f - arrowSize * 1.4f)
-                    lineTo(w * 0.5f + arrowSize, h * 0.89f - arrowSize * 1.4f)
-                    close()
-                },
-                color = arrowColor(VirtualButton.DOWN),
-            )
-            drawPath(
-                Path().apply {
-                    moveTo(w * 0.11f, h * 0.5f)
-                    lineTo(w * 0.11f + arrowSize * 1.4f, h * 0.5f - arrowSize)
-                    lineTo(w * 0.11f + arrowSize * 1.4f, h * 0.5f + arrowSize)
-                    close()
-                },
-                color = arrowColor(VirtualButton.LEFT),
-            )
-            drawPath(
-                Path().apply {
-                    moveTo(w * 0.89f, h * 0.5f)
-                    lineTo(w * 0.89f - arrowSize * 1.4f, h * 0.5f - arrowSize)
-                    lineTo(w * 0.89f - arrowSize * 1.4f, h * 0.5f + arrowSize)
-                    close()
-                },
-                color = arrowColor(VirtualButton.RIGHT),
+                color = palette.controlEdgeShade.copy(alpha = 0.30f),
+                radius = dimpleRadius * 0.66f,
+                center = Offset(w * 0.5f, h * 0.5f + dimpleRadius * 0.10f),
             )
         }
     }
 }
 
-/** Multi-touch circular A / B handheld button with a layered chrome rim and inset face. */
+private fun DpadDirection.toVirtualButton(): VirtualButton = when (this) {
+    DpadDirection.UP -> VirtualButton.UP
+    DpadDirection.RIGHT -> VirtualButton.RIGHT
+    DpadDirection.DOWN -> VirtualButton.DOWN
+    DpadDirection.LEFT -> VirtualButton.LEFT
+}
+
+/**
+ * Multi-touch circular A / B button: a moulded plastic disc with the letter engraved into it.
+ */
 @Composable
 fun HandheldActionButton(
     button: VirtualButton,
@@ -260,22 +226,27 @@ fun HandheldActionButton(
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalHandheldPalette.current
-    PremiumRoundButtonSurface(
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = modifier
             .semantics {
                 contentDescription = "${button.label} button"
                 role = Role.Button
             }
             .handheldButtonGestures(interactive, tracker, button, onInputChanged),
-        diameter = diameter,
-        isPressed = isPressed,
-        opacity = opacity,
     ) {
-        EmbossedButtonLabel(
+        PremiumRoundButtonSurface(
+            modifier = Modifier,
+            diameter = diameter,
+            isPressed = isPressed,
+            opacity = opacity,
+        )
+        // The letter is moulded into the plastic rather than printed on top of it.
+        EngravedPlasticLabel(
             text = button.label,
-            fontSize = 22.sp,
-            color = if (isPressed) EmulatorColors.AccentBlue else palette.buttonLabel,
-            highlight = palette.buttonLabelHighlight,
+            fontSize = (diameter.value * 0.34f).sp,
+            ink = if (isPressed) palette.controlEngravePressed else palette.controlEngrave,
+            lip = palette.controlEngraveShadow,
         )
     }
 }
@@ -376,11 +347,11 @@ fun HandheldShoulderButton(
                 cap = StrokeCap.Round,
             )
         }
-        EmbossedButtonLabel(
+        EngravedPlasticLabel(
             text = button.label,
             fontSize = 15.sp,
-            color = if (isPressed) EmulatorColors.AccentBlue else palette.buttonLabel,
-            highlight = palette.buttonLabelHighlight,
+            ink = if (isPressed) palette.controlEngravePressed else palette.controlEngrave,
+            lip = palette.controlEngraveShadow,
         )
     }
 }
@@ -408,14 +379,13 @@ fun HandheldSmallTouchButton(
     ) {
         // 48dp accessible hit envelope wrapping the visual handheld button.
         Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp)) {
+            // No lettering on the physical button; the label is engraved into the shell.
             PremiumRoundButtonSurface(
                 modifier = Modifier,
                 diameter = 30.dp,
                 isPressed = isPressed,
                 opacity = 1f,
-            ) {
-                // No lettering on the physical button; the label is engraved into the shell.
-            }
+            )
         }
         EngravedShellLabel(text = button.label.uppercase())
     }
@@ -443,14 +413,13 @@ fun HandheldMenuButton(
                 diameter = 30.dp,
                 isPressed = false,
                 opacity = 1f,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = null,
-                    tint = palette.buttonLabel,
-                    modifier = Modifier.size(17.dp),
-                )
-            }
+            )
+            Icon(
+                imageVector = Icons.Filled.Settings,
+                contentDescription = null,
+                tint = palette.controlEngrave,
+                modifier = Modifier.size(15.dp),
+            )
         }
         EngravedShellLabel(text = "MENU")
     }
@@ -490,100 +459,120 @@ fun HandheldSpeakerGrille(modifier: Modifier = Modifier) {
     }
 }
 
-/** Shared circular button chrome: cast shadow, metal rim, inset bevel and specular ring. */
+/**
+ * Shared round control: a matte moulded-plastic button.
+ *
+ * Built from the same layers as the reference hardware: a shadowed socket, a raised lip, a
+ * slightly domed face plate and a bevelled edge. Deliberately no chrome specular ring, because
+ * the matte look is what keeps the controls reading as part of the shell.
+ *
+ * [isPressed] is a plain Boolean so the surface can be previewed and screenshot-tested.
+ */
 @Composable
 private fun PremiumRoundButtonSurface(
     modifier: Modifier,
     diameter: Dp,
     isPressed: Boolean,
     opacity: Float,
-    content: @Composable () -> Unit,
 ) {
     val palette = LocalHandheldPalette.current
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .size(diameter)
-            .graphicsLayer(
-                scaleX = if (isPressed) 0.965f else 1f,
-                scaleY = if (isPressed) 0.965f else 1f,
-                translationY = if (isPressed) 2f else 0f,
-            )
+            .graphicsLayer {
+                val pressedDepth = if (isPressed) 0.972f else 1f
+                scaleX = pressedDepth
+                scaleY = pressedDepth
+                translationY = if (isPressed) 1.5f else 0f
+            }
             .alpha(opacity)
             .shadow(
-                elevation = if (isPressed) 2.dp else 9.dp,
+                elevation = if (isPressed) 2.dp else 8.dp,
                 shape = CircleShape,
                 clip = false,
                 ambientColor = palette.castShadow,
                 spotColor = palette.castShadow,
-            )
-            .clip(CircleShape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(palette.buttonRimLight, palette.buttonRimMid, palette.buttonRimDark),
-                ),
-                CircleShape,
-            )
-            .border(1.6.dp, palette.buttonOutline, CircleShape),
+            ),
     ) {
-        Canvas(
-            modifier = Modifier
-                .matchParentSize()
-                .padding(3.dp)
-                .clip(CircleShape),
-        ) {
+        Canvas(modifier = Modifier.matchParentSize()) {
             val center = Offset(size.width * 0.5f, size.height * 0.5f)
-            val diameterPx = minOf(size.width, size.height)
-            val faceBrush = if (isPressed) {
-                Brush.radialGradient(
-                    colors = listOf(palette.buttonFacePressed, palette.buttonFace, palette.buttonShadow),
-                    center = Offset(size.width * 0.58f, size.height * 0.62f),
-                    radius = diameterPx * 0.9f,
-                )
-            } else {
-                Brush.radialGradient(
-                    colors = listOf(palette.buttonHighlight, palette.buttonFace, palette.buttonShadow),
-                    center = Offset(size.width * 0.32f, size.height * 0.22f),
-                    radius = diameterPx * 0.95f,
-                )
-            }
-            drawCircle(brush = faceBrush, radius = diameterPx * 0.5f, center = center)
+            val d = minOf(size.width, size.height)
+            val rim = d * 0.055f
+            val faceRadius = d * 0.5f - rim
+
+            // Shadowed socket the button sits in.
             drawCircle(
-                color = Color.White.copy(alpha = if (isPressed) 0.22f else 0.48f),
-                radius = diameterPx * 0.42f,
+                color = palette.controlEdgeShade.copy(alpha = 0.55f),
+                radius = d * 0.5f,
+                center = center.copy(y = center.y + d * 0.012f),
+            )
+            // Raised lip.
+            drawCircle(
+                brush = Brush.verticalGradient(
+                    0f to palette.controlLipTop,
+                    1f to palette.controlLipBottom,
+                ),
+                radius = d * 0.5f,
                 center = center,
-                style = Stroke(width = 1.8.dp.toPx()),
+            )
+            // Face plate, lit from the top-left.
+            drawCircle(
+                brush = if (isPressed) {
+                    Brush.linearGradient(
+                        colors = listOf(palette.controlFacePressedTop, palette.controlFacePressedBottom),
+                        start = Offset(center.x - faceRadius, center.y - faceRadius),
+                        end = Offset(center.x + faceRadius, center.y + faceRadius),
+                    )
+                } else {
+                    Brush.linearGradient(
+                        colors = listOf(
+                            palette.controlLipTop,
+                            palette.controlFaceTop,
+                            palette.controlFaceBottom,
+                        ),
+                        start = Offset(center.x - faceRadius, center.y - faceRadius),
+                        end = Offset(center.x + faceRadius, center.y + faceRadius * 1.1f),
+                    )
+                },
+                radius = faceRadius,
+                center = center,
+            )
+            // Bevelled edge between the lip and the flat face.
+            drawCircle(
+                color = palette.controlEdgeLight,
+                radius = faceRadius,
+                center = center,
+                style = Stroke(width = maxOf(1f, rim * 0.34f)),
             )
             drawCircle(
-                color = palette.buttonShadow.copy(alpha = 0.48f),
-                radius = diameterPx * 0.47f,
+                color = palette.controlEdgeShade.copy(alpha = 0.34f),
+                radius = d * 0.5f - maxOf(1f, rim * 0.16f),
                 center = center,
-                style = Stroke(width = 1.dp.toPx()),
+                style = Stroke(width = maxOf(1f, rim * 0.26f)),
             )
         }
-        content()
     }
 }
 
+/** Engraved (cut-in) plastic lettering: an ink fill with a light lip on its lower edge. */
 @Composable
-private fun EmbossedButtonLabel(
+private fun EngravedPlasticLabel(
     text: String,
     fontSize: TextUnit,
-    color: Color,
-    highlight: Color,
+    ink: Color,
+    lip: Color,
+    modifier: Modifier = Modifier,
 ) {
     Text(
         text = text,
         fontSize = fontSize,
-        fontWeight = FontWeight.Bold,
-        color = color,
+        fontWeight = FontWeight.Medium,
+        color = ink,
         style = TextStyle(
-            shadow = Shadow(
-                color = highlight,
-                offset = Offset(0f, 1.6f),
-                blurRadius = 0.8f,
-            ),
+            shadow = Shadow(color = lip, offset = Offset(0f, 1.2f), blurRadius = 0.7f),
         ),
+        modifier = modifier,
     )
 }
 
@@ -699,38 +688,3 @@ private val DIRECTION_BUTTONS = setOf(
     VirtualButton.RIGHT,
 )
 
-private val HandheldDPadShape = GenericShape { size, _ ->
-    val arm = size.width * 0.34f
-    val left = (size.width - arm) / 2f
-    val right = left + arm
-    val top = (size.height - arm) / 2f
-    val bottom = top + arm
-    val radius = minOf(size.width, size.height) * 0.075f
-
-    moveTo(left + radius, 0f)
-    lineTo(right - radius, 0f)
-    quadraticTo(right, 0f, right, radius)
-    lineTo(right, top - radius)
-    quadraticTo(right, top, right + radius, top)
-    lineTo(size.width - radius, top)
-    quadraticTo(size.width, top, size.width, top + radius)
-    lineTo(size.width, bottom - radius)
-    quadraticTo(size.width, bottom, size.width - radius, bottom)
-    lineTo(right + radius, bottom)
-    quadraticTo(right, bottom, right, bottom + radius)
-    lineTo(right, size.height - radius)
-    quadraticTo(right, size.height, right - radius, size.height)
-    lineTo(left + radius, size.height)
-    quadraticTo(left, size.height, left, size.height - radius)
-    lineTo(left, bottom + radius)
-    quadraticTo(left, bottom, left - radius, bottom)
-    lineTo(radius, bottom)
-    quadraticTo(0f, bottom, 0f, bottom - radius)
-    lineTo(0f, top + radius)
-    quadraticTo(0f, top, radius, top)
-    lineTo(left - radius, top)
-    quadraticTo(left, top, left, top + radius)
-    lineTo(left, radius)
-    quadraticTo(left, 0f, left + radius, 0f)
-    close()
-}

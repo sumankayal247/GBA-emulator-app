@@ -171,17 +171,32 @@ Reference: [08 — Library home](reference-images/08-library-home.jpg)
 References: [01 — Portrait gameplay](reference-images/01-gameplay-portrait.jpg) and [02 — Landscape gameplay](reference-images/02-gameplay-landscape.jpg)
 
 **Portrait layout**
-- Game viewport and bezel in the upper portion.
+- Game viewport and bezel across the upper portion, full width and locked to the native 3:2
+  aspect ratio, occupying every pixel the control rows do not claim (owner direction: as large
+  as possible, ending just above the L/R row).
 - L/R shoulder buttons positioned above the main controls.
 - D-pad on the lower left; A/B on the lower right.
+- A/B diagonal follows the hardware: **A lower and inboard, B upper and outboard**. This is a
+  deliberate reversal of the first implementation, which had A upper-right, and applies to both
+  orientations.
 - Start, Select, Menu, and optional speaker/grip decoration along the bottom.
 - The viewport must remain large enough to read, with controls reachable by both thumbs.
 
 **Landscape layout**
 - Game viewport centred.
-- D-pad on the left; A/B on the right.
+- D-pad on the left; A/B on the right, on the same A-low/B-high diagonal as portrait.
 - L/R at the outer top corners; Start/Select/Menu placed where they do not overlap the game.
 - Use safe insets and adapt to short screens; do not simply rotate and stretch the portrait layout.
+
+**Control appearance**
+- Controls are drawn as moulded matte plastic, not chrome: a raised lip, a recessed face plate
+  with an even rim, soft top lighting, and glyphs/letters engraved into the surface.
+- The D-pad body is one traced cross outline (`HandheldControlGeometry`) with concave fillets at
+  the four arm junctions, clipped as a whole. Overlaying hard-edged highlight/shadow rectangles
+  per arm is explicitly rejected: it let shadows spill outside the silhouette and made the arms
+  look deformed.
+- Geometry is unit-tested (`HandheldControlGeometryTest`) for bounds, 4-fold symmetry,
+  self-intersection, rim evenness, and glyph placement.
 
 **Control behaviour**
 - Use pointer IDs / pointer tracking so several buttons can be held at once.
