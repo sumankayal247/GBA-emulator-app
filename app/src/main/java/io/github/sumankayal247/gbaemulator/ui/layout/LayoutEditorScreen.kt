@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,8 +21,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Restore
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -47,18 +48,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import io.github.sumankayal247.gbaemulator.domain.model.ControlAnchors
+import io.github.sumankayal247.gbaemulator.domain.model.ControlPlacement
+import io.github.sumankayal247.gbaemulator.domain.model.ControlSlot
 import io.github.sumankayal247.gbaemulator.domain.model.EmulatorPreferences
 import io.github.sumankayal247.gbaemulator.domain.model.LayoutPreset
 import io.github.sumankayal247.gbaemulator.domain.model.ShellColors
 import io.github.sumankayal247.gbaemulator.domain.model.TouchLayoutProfile
-import io.github.sumankayal247.gbaemulator.ui.theme.EmulatorColors
 import io.github.sumankayal247.gbaemulator.emulator.TouchInputTracker
 import io.github.sumankayal247.gbaemulator.ui.gameplay.HandheldScreenPlaceholder
 import io.github.sumankayal247.gbaemulator.ui.gameplay.LandscapeHandheldLayout
@@ -66,12 +69,21 @@ import io.github.sumankayal247.gbaemulator.ui.gameplay.PortraitHandheldLayout
 import io.github.sumankayal247.gbaemulator.ui.gameplay.ProvideHandheldPalette
 import io.github.sumankayal247.gbaemulator.ui.gameplay.handheldPalette
 import io.github.sumankayal247.gbaemulator.ui.gameplay.handheldShellBrush
+import io.github.sumankayal247.gbaemulator.ui.theme.EmulatorColors
 import kotlin.math.roundToInt
 
 /**
- * Separate Portrait & Landscape virtual handheld layout editor (P4 / ADR-0005).
- * Provides presets (Default / Compact / Large), clamped safe bounds so controls never move
- * off-screen, live handheld preview, Undo, Reset, and haptic feedback toggle.
+ * Virtual handheld layout editor.
+ *
+ * The workflow is deliberately two steps, because the previous screen exposed a wall of sliders
+ * for global nudges and still could not place an individual button:
+ *
+ *  1. Pick a control from the row of chips.
+ *  2. Drag it on the preview, then press **Done** to save.
+ *
+ * Portrait and landscape keep separate profiles. Everything is clamped by
+ * [ControlPlacement], so a control cannot be
+ * dragged off the handheld.
  */
 @Composable
 fun LayoutEditorScreen(
@@ -86,16 +98,15 @@ fun LayoutEditorScreen(
     val persisted = if (editingLandscape) preferences.landscapeLayout else preferences.portraitLayout
 
     var draft by remember(editingLandscape, persisted) { mutableStateOf(persisted) }
-    var previousDraft by remember(editingLandscape) { mutableStateOf<TouchLayoutProfile?>(null) }
-
-    fun updateDraft(mutator: (TouchLayoutProfile) -> TouchLayoutProfile) {
-        previousDraft = draft
-        draft = mutator(draft).clamped()
-    }
+    var selected by remember { mutableStateOf(ControlSlot.DPAD) }
+    var shellDraft by remember(preferences.shellColorHex) { mutableStateOf(preferences.shellColorHex) }
 
     val hasUnsavedChanges = draft != persisted
-    var shellDraft by remember(preferences.shellColorHex) { mutableStateOf(preferences.shellColorHex) }
     val normalizedShell = ShellColors.normalize(shellDraft)
+
+    fun save() {
+        if (editingLandscape) onSaveLandscapeLayout(draft) else onSavePortraitLayout(draft)
+    }
 
     Column(
         modifier = modifier
@@ -111,88 +122,92 @@ fun LayoutEditorScreen(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            text = "Customize portrait and landscape virtual handheld controls separately.",
+            text = "Tap a control, drag it where you want it, then press Done.",
             style = MaterialTheme.typography.bodySmall,
             color = EmulatorColors.TextSecondary,
         )
 
-        Spacer(Modifier.height(14.dp))
-
-        // Orientation mode switcher
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = !editingLandscape,
-                onClick = { editingLandscape = false },
-                label = { Text("Portrait") },
-                colors = FilterChipDefaults.filterChipColors(
-                    containerColor = EmulatorColors.CardSurface,
-                    selectedContainerColor = EmulatorColors.AccentBlue.copy(alpha = 0.25f),
-                    selectedLabelColor = EmulatorColors.AccentCyan,
-                ),
-            )
-            FilterChip(
-                selected = editingLandscape,
-                onClick = { editingLandscape = true },
-                label = { Text("Landscape") },
-                colors = FilterChipDefaults.filterChipColors(
-                    containerColor = EmulatorColors.CardSurface,
-                    selectedContainerColor = EmulatorColors.AccentBlue.copy(alpha = 0.25f),
-                    selectedLabelColor = EmulatorColors.AccentCyan,
-                ),
-            )
-        }
-
         Spacer(Modifier.height(12.dp))
 
-        // Live visual handheld preview
+        // Orientation switcher. Drafts are per-orientation, so switching reloads from prefs.
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OrientationChip("Portrait", !editingLandscape) { editingLandscape = false }
+            OrientationChip("Landscape", editingLandscape) { editingLandscape = true }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // The draggable preview.
         HandheldLayoutPreview(
             profile = draft,
             landscape = editingLandscape,
             shellColorHex = normalizedShell ?: preferences.shellColorHex,
+            selected = selected,
+            onSlotMoved = { slot, anchors ->
+                draft = draft.withAnchor(slot, anchors)
+            },
+        )
+
+        Spacer(Modifier.height(10.dp))
+
+        Text(
+            text = "Selected: ${selected.label}",
+            style = MaterialTheme.typography.labelLarge,
+            color = EmulatorColors.AccentCyan,
         )
         Text(
-            text = "Scaled to this window’s dimensions. Rotated preview is an estimate; system insets can differ in gameplay.",
+            text = "Drag the highlighted control in the preview above.",
             style = MaterialTheme.typography.bodySmall,
             color = EmulatorColors.TextSecondary,
         )
 
-        Spacer(Modifier.height(14.dp))
-        ShellColorEditor(
-            value = shellDraft,
-            onValueChange = { shellDraft = it },
-            onSave = { normalizedShell?.let(onSaveShellColor) },
-            canSave = normalizedShell != null && normalizedShell != preferences.shellColorHex,
-        )
+        Spacer(Modifier.height(8.dp))
 
-        Spacer(Modifier.height(14.dp))
-
-        // Presets row
-        Text(
-            text = "Presets",
-            style = MaterialTheme.typography.labelLarge,
-            color = EmulatorColors.TextPrimary,
-        )
-        Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(LayoutPreset.DEFAULT, LayoutPreset.COMPACT, LayoutPreset.LARGE).forEach { preset ->
-                FilterChip(
-                    selected = draft.preset == preset,
-                    onClick = {
-                        updateDraft { TouchLayoutProfile.forPreset(preset, editingLandscape) }
-                    },
-                    label = { Text(preset.label) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        containerColor = EmulatorColors.CardSurface,
-                        selectedContainerColor = EmulatorColors.AccentBlue.copy(alpha = 0.25f),
-                        selectedLabelColor = EmulatorColors.AccentCyan,
-                    ),
-                )
+        // Control picker.
+        ControlSlot.ordered.chunked(4).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { slot ->
+                    FilterChip(
+                        selected = selected == slot,
+                        onClick = { selected = slot },
+                        label = { Text(slot.label) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = EmulatorColors.CardSurface,
+                            selectedContainerColor = EmulatorColors.AccentBlue.copy(alpha = 0.25f),
+                            selectedLabelColor = EmulatorColors.AccentCyan,
+                        ),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
+            Spacer(Modifier.height(4.dp))
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(8.dp))
 
-        // Clamped adjustment card
+        // Nudge buttons, an accessible fallback for fine placement without a drag.
+        NudgePad(
+            onNudge = { dx, dy ->
+                val landscape = editingLandscape
+                val current = draft.anchorsFor(selected, landscape)
+                draft = draft.withAnchor(
+                    selected,
+                    ControlAnchors(
+                        (current.x + dx).coerceIn(0f, 1f),
+                        (current.y + dy).coerceIn(0f, 1f),
+                    ),
+                )
+            },
+            onCentre = {
+                draft = draft.withAnchor(selected, ControlAnchors(0.5f, 0.5f))
+            },
+            enabled = true,
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        // Size + opacity only. The seven offset sliders are gone: they only moved whole groups
+        // and are now expressed by dragging the individual control instead.
         Surface(
             color = EmulatorColors.CardSurface,
             shape = RoundedCornerShape(16.dp),
@@ -206,170 +221,70 @@ fun LayoutEditorScreen(
                     valueLabel = "${(draft.scale * 100).roundToInt()}%",
                     value = draft.scale,
                     range = TouchLayoutProfile.MIN_SCALE..TouchLayoutProfile.MAX_SCALE,
-                    onValueChange = { v ->
-                        updateDraft { it.copy(preset = LayoutPreset.CUSTOM, scale = v) }
-                    },
+                    onValueChange = { v -> draft = draft.copy(preset = LayoutPreset.CUSTOM, scale = v) },
                 )
                 LabeledSlider(
                     label = "Control opacity",
                     valueLabel = "${(draft.opacity * 100).roundToInt()}%",
                     value = draft.opacity,
                     range = TouchLayoutProfile.MIN_OPACITY..TouchLayoutProfile.MAX_OPACITY,
-                    onValueChange = { v ->
-                        updateDraft { it.copy(preset = LayoutPreset.CUSTOM, opacity = v) }
-                    },
-                )
-                LabeledSlider(
-                    label = "D-Pad horizontal offset",
-                    valueLabel = "${draft.dpadOffsetXdp.roundToInt()} dp",
-                    value = draft.dpadOffsetXdp,
-                    range = -TouchLayoutProfile.MAX_OFFSET_DP..TouchLayoutProfile.MAX_OFFSET_DP,
-                    onValueChange = { v ->
-                        updateDraft { it.copy(preset = LayoutPreset.CUSTOM, dpadOffsetXdp = v) }
-                    },
-                )
-                LabeledSlider(
-                    label = "D-Pad vertical offset",
-                    valueLabel = "${draft.dpadOffsetYdp.roundToInt()} dp",
-                    value = draft.dpadOffsetYdp,
-                    range = -TouchLayoutProfile.MAX_OFFSET_DP..TouchLayoutProfile.MAX_OFFSET_DP,
-                    onValueChange = { v ->
-                        updateDraft { it.copy(preset = LayoutPreset.CUSTOM, dpadOffsetYdp = v) }
-                    },
-                )
-                LabeledSlider(
-                    label = "A / B buttons horizontal offset",
-                    valueLabel = "${draft.buttonsOffsetXdp.roundToInt()} dp",
-                    value = draft.buttonsOffsetXdp,
-                    range = -TouchLayoutProfile.MAX_OFFSET_DP..TouchLayoutProfile.MAX_OFFSET_DP,
-                    onValueChange = { v ->
-                        updateDraft { it.copy(preset = LayoutPreset.CUSTOM, buttonsOffsetXdp = v) }
-                    },
-                )
-                LabeledSlider(
-                    label = "A / B buttons vertical offset",
-                    valueLabel = "${draft.buttonsOffsetYdp.roundToInt()} dp",
-                    value = draft.buttonsOffsetYdp,
-                    range = -TouchLayoutProfile.MAX_OFFSET_DP..TouchLayoutProfile.MAX_OFFSET_DP,
-                    onValueChange = { v ->
-                        updateDraft { it.copy(preset = LayoutPreset.CUSTOM, buttonsOffsetYdp = v) }
-                    },
-                )
-                LabeledSlider(
-                    label = "L / R shoulders vertical offset",
-                    valueLabel = "${draft.shouldersOffsetYdp.roundToInt()} dp",
-                    value = draft.shouldersOffsetYdp,
-                    range = -TouchLayoutProfile.MAX_SHOULDER_OFFSET_DP..TouchLayoutProfile.MAX_SHOULDER_OFFSET_DP,
-                    onValueChange = { v ->
-                        updateDraft { it.copy(preset = LayoutPreset.CUSTOM, shouldersOffsetYdp = v) }
-                    },
+                    onValueChange = { v -> draft = draft.copy(preset = LayoutPreset.CUSTOM, opacity = v) },
                 )
             }
         }
 
         Spacer(Modifier.height(12.dp))
 
-        // Haptic feedback switch
-        Surface(
-            color = EmulatorColors.CardSurface,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(14.dp)),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Haptic feedback",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = EmulatorColors.TextPrimary,
-                    )
-                    Text(
-                        text = "Subtle vibration when pressing touch controls",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = EmulatorColors.TextSecondary,
-                    )
-                }
-                Switch(
-                    checked = preferences.hapticsEnabled,
-                    onCheckedChange = onToggleHaptics,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = EmulatorColors.TextPrimary,
-                        checkedTrackColor = EmulatorColors.AccentBlue,
-                    ),
-                )
-            }
-        }
+        ShellColorEditor(
+            value = shellDraft,
+            onValueChange = { shellDraft = it },
+            onSave = { normalizedShell?.let(onSaveShellColor) },
+            canSave = normalizedShell != null && normalizedShell != preferences.shellColorHex,
+        )
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
 
-        // Action buttons: Undo, Reset, Save
+        HapticsRow(preferences.hapticsEnabled, onToggleHaptics)
+
+        Spacer(Modifier.height(12.dp))
+
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             OutlinedButton(
                 onClick = {
-                    previousDraft?.let { prev ->
-                        draft = prev
-                        previousDraft = null
-                    }
-                },
-                enabled = previousDraft != null,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(Icons.Filled.Undo, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Undo")
-            }
-
-            OutlinedButton(
-                onClick = {
-                    val defaultProfile = if (editingLandscape) {
+                    val defaults = if (editingLandscape) {
                         TouchLayoutProfile.defaultLandscape()
                     } else {
                         TouchLayoutProfile.defaultPortrait()
                     }
-                    previousDraft = draft
-                    draft = defaultProfile
-                    if (editingLandscape) onSaveLandscapeLayout(defaultProfile) else onSavePortraitLayout(defaultProfile)
+                    draft = defaults
                 },
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f),
             ) {
                 Icon(Icons.Filled.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.size(6.dp))
                 Text("Reset")
             }
-        }
 
-        Spacer(Modifier.height(10.dp))
-
-        Button(
-            onClick = {
-                if (editingLandscape) onSaveLandscapeLayout(draft) else onSavePortraitLayout(draft)
-            },
-            enabled = hasUnsavedChanges,
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = EmulatorColors.AccentBlue),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-        ) {
-            Text(
-                text = if (hasUnsavedChanges) {
-                    "Save ${if (editingLandscape) "Landscape" else "Portrait"} Layout"
-                } else {
-                    "Layout Saved"
-                },
-                fontWeight = FontWeight.SemiBold,
-            )
+            Button(
+                onClick = { save() },
+                enabled = hasUnsavedChanges,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = EmulatorColors.AccentBlue),
+                modifier = Modifier
+                    .weight(1.4f)
+                    .height(48.dp),
+            ) {
+                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    text = if (hasUnsavedChanges) "Done" else "Saved",
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
 
         Spacer(Modifier.height(24.dp))
@@ -377,10 +292,107 @@ fun LayoutEditorScreen(
 }
 
 @Composable
+private fun OrientationChip(label: String, selectedState: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selectedState,
+        onClick = onClick,
+        label = { Text(label) },
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = EmulatorColors.CardSurface,
+            selectedContainerColor = EmulatorColors.AccentBlue.copy(alpha = 0.25f),
+            selectedLabelColor = EmulatorColors.AccentCyan,
+        ),
+    )
+}
+
+/**
+ * Nine-way nudge pad. Dragging is the primary interaction, but a nudge pad is far easier to hit
+ * than a drag handle for anyone with limited precision, and it gives a keyboard/switch-access
+ * path that a drag gesture does not.
+ */
+@Composable
+private fun NudgePad(
+    onNudge: (Float, Float) -> Unit,
+    onCentre: () -> Unit,
+    enabled: Boolean,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        NudgeButton("↑", enabled) { onNudge(0f, -0.02f) }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            NudgeButton("←", enabled) { onNudge(-0.02f, 0f) }
+            NudgeButton("◎", enabled, onCentre)
+            NudgeButton("→", enabled) { onNudge(0.02f, 0f) }
+        }
+        NudgeButton("↓", enabled) { onNudge(0f, 0.02f) }
+    }
+}
+
+@Composable
+private fun NudgeButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.size(44.dp),
+        contentPadding = PaddingValues(0.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun HapticsRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Surface(
+        color = EmulatorColors.CardSurface,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(14.dp)),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Haptic feedback", style = MaterialTheme.typography.bodyLarge, color = EmulatorColors.TextPrimary)
+                Text(
+                    "Subtle vibration when pressing touch controls",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = EmulatorColors.TextSecondary,
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = EmulatorColors.TextPrimary,
+                    checkedTrackColor = EmulatorColors.AccentBlue,
+                ),
+            )
+        }
+    }
+}
+
+/**
+ * Live handheld preview that hosts the drag handles.
+ *
+ * The handheld is measured at real device dp and then scaled down as a single layer, exactly as
+ * gameplay measures it, so the preview is a faithful miniature rather than a second
+ * implementation. The drag handles live inside that same scaled layer, which is what keeps a
+ * handle glued to the control it moves at every zoom level.
+ */
+@Composable
 private fun HandheldLayoutPreview(
     profile: TouchLayoutProfile,
     landscape: Boolean,
     shellColorHex: String,
+    selected: ControlSlot,
+    onSlotMoved: (ControlSlot, ControlAnchors) -> Unit,
 ) {
     val configuration = LocalConfiguration.current
     val shortSide = minOf(configuration.screenWidthDp, configuration.screenHeightDp).coerceAtLeast(1)
@@ -393,10 +405,13 @@ private fun HandheldLayoutPreview(
     BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         val previewWidth = minOf(maxWidth.value, 340f * deviceWidth / deviceHeight).dp
         val previewHeight = (previewWidth.value * deviceHeight / deviceWidth).dp
-        // Measure exactly as gameplay does at the current window's dp size, then scale the
-        // entire result (including text, offsets and shadows) down as a single layer.
+        var layerScale by remember { mutableStateOf(1f) }
+
         Layout(
-            modifier = Modifier.width(previewWidth).height(previewHeight).clip(RoundedCornerShape(12.dp)),
+            modifier = Modifier
+                .width(previewWidth)
+                .height(previewHeight)
+                .clip(RoundedCornerShape(12.dp)),
             content = {
                 ProvideHandheldPalette(shellColorHex) {
                     Box(Modifier.fillMaxSize().background(handheldShellBrush(palette))) {
@@ -414,6 +429,16 @@ private fun HandheldLayoutPreview(
                             )
                         }
                     }
+                    // A sibling of the handheld inside the same Box, so the handles share its
+                    // scaled coordinate space and stay exactly on top of the controls they edit.
+                    LayoutEditorDragHandles(
+                        profile = profile,
+                        landscape = landscape,
+                        selected = selected,
+                        layerScale = layerScale,
+                        onSlotMoved = onSlotMoved,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             },
         ) { measurables, constraints ->
@@ -423,6 +448,7 @@ private fun HandheldLayoutPreview(
             val width = constraints.maxWidth
             val height = constraints.maxHeight
             val scale = minOf(width.toFloat() / realWidth, height.toFloat() / realHeight)
+            if (layerScale != scale) layerScale = scale
             layout(width, height) {
                 child.placeRelativeWithLayer(0, 0) {
                     scaleX = scale
@@ -449,7 +475,11 @@ private fun ShellColorEditor(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Shell colour", style = MaterialTheme.typography.titleMedium, color = EmulatorColors.TextPrimary)
-            Text("Applies to both orientations", style = MaterialTheme.typography.bodySmall, color = EmulatorColors.TextSecondary)
+            Text(
+                "Applies to both orientations",
+                style = MaterialTheme.typography.bodySmall,
+                color = EmulatorColors.TextSecondary,
+            )
             ShellColors.PRESETS.chunked(4).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     row.forEach { preset ->
@@ -469,7 +499,12 @@ private fun ShellColorEditor(
                                         CircleShape,
                                     ),
                             )
-                            Text(preset.label, maxLines = 1, style = MaterialTheme.typography.labelSmall, color = EmulatorColors.TextPrimary)
+                            Text(
+                                preset.label,
+                                maxLines = 1,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmulatorColors.TextPrimary,
+                            )
                         }
                     }
                 }
@@ -478,13 +513,21 @@ private fun ShellColorEditor(
                 value = value,
                 onValueChange = { onValueChange(it.take(9)) },
                 label = { Text("Custom colour (RGB hex)") },
-                supportingText = { Text(if (normalized == null) "Enter six hexadecimal digits, e.g. 6E00FF" else "Preview updates before saving") },
+                supportingText = {
+                    Text(
+                        if (normalized == null) "Enter six hexadecimal digits, e.g. 6E00FF"
+                        else "Preview updates before saving",
+                    )
+                },
                 isError = normalized == null,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(onClick = onSave, enabled = canSave, modifier = Modifier.fillMaxWidth()) {
-                Text(if (normalized == null) "Enter a valid colour" else if (canSave) "Save shell colour" else "Shell colour saved")
+                Text(
+                    if (normalized == null) "Enter a valid colour"
+                    else if (canSave) "Save shell colour" else "Shell colour saved",
+                )
             }
         }
     }
@@ -499,10 +542,7 @@ private fun LabeledSlider(
     onValueChange: (Float) -> Unit,
 ) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
-        Row(
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text(label, style = MaterialTheme.typography.bodyMedium, color = EmulatorColors.TextPrimary)
             Text(valueLabel, style = MaterialTheme.typography.labelMedium, color = EmulatorColors.AccentCyan)
         }
