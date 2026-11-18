@@ -44,9 +44,21 @@ data class HandheldPalette(
     val buttonFace: Color,
     val buttonFacePressed: Color,
     val buttonShadow: Color,
-    val buttonLabel: Color,
-    val buttonLabelHighlight: Color,
     val castShadow: Color,
+    // Matte moulded-plastic layers (reference 09/10): a raised lip, a domed face plate,
+    // an engraved groove around the plate, and engraved (not printed) glyphs.
+    val controlLipTop: Color,
+    val controlLipBottom: Color,
+    val controlFaceTop: Color,
+    val controlFaceBottom: Color,
+    val controlFacePressedTop: Color,
+    val controlFacePressedBottom: Color,
+    val controlEdgeLight: Color,
+    val controlEdgeShade: Color,
+    val controlGroove: Color,
+    val controlEngrave: Color,
+    val controlEngraveShadow: Color,
+    val controlEngravePressed: Color,
 )
 
 val LocalHandheldPalette = staticCompositionLocalOf { classicHandheldPalette() }
@@ -85,9 +97,21 @@ fun handheldPalette(rawHex: String): HandheldPalette {
         buttonFace = Color(0.84f, 0.87f, 0.92f),
         buttonFacePressed = Color(0.63f, 0.68f, 0.76f),
         buttonShadow = Color(0.48f, 0.53f, 0.61f),
-        buttonLabel = Color(0.34f, 0.37f, 0.43f),
-        buttonLabelHighlight = white.copy(alpha = 0.72f),
         castShadow = black.copy(alpha = 0.38f),
+        // Matte plastic. The face is nearly neutral (the references are a soft off-white even on
+        // a saturated shell) so the engraved glyphs read without a printed-looking contrast.
+        controlLipTop = Color(0.945f, 0.952f, 0.965f),
+        controlLipBottom = Color(0.652f, 0.686f, 0.741f),
+        controlFaceTop = Color(0.925f, 0.937f, 0.961f),
+        controlFaceBottom = Color(0.792f, 0.827f, 0.878f),
+        controlFacePressedTop = Color(0.846f, 0.866f, 0.902f),
+        controlFacePressedBottom = Color(0.710f, 0.749f, 0.812f),
+        controlEdgeLight = white.copy(alpha = 0.62f),
+        controlEdgeShade = Color(0.208f, 0.239f, 0.318f).copy(alpha = 0.42f),
+        controlGroove = Color(0.404f, 0.443f, 0.522f).copy(alpha = 0.30f),
+        controlEngrave = Color(0.478f, 0.502f, 0.549f),
+        controlEngraveShadow = white.copy(alpha = 0.55f),
+        controlEngravePressed = Color(0.278f, 0.420f, 0.729f),
     )
 }
 

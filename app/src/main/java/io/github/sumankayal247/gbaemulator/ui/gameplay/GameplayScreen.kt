@@ -427,6 +427,58 @@ private fun GameViewportSurface(
     }
 }
 
+/**
+ * How large the portrait controls can be before they start squeezing the viewport.
+ *
+ * The viewport is locked to 3:2 and takes the full width, so its height is decided by the device
+ * width, not by preference. On short or narrow windows the control band would then overlap the
+ * screen or spill off the bottom edge, so it shrinks [PORTRAIT_MIN_CONTROL_SCALE]..1 of the
+ * user's requested scale. The band height is not constant in `scale` (the shoulder buttons and
+ * D-pad both scale, the bottom label row does not), hence the explicit solve below.
+ */
+internal fun portraitControlScale(
+    requestedScale: Float,
+    windowWidthDp: Float,
+    windowHeightDp: Float,
+): Float {
+    if (windowWidthDp <= 0f || windowHeightDp <= 0f) return requestedScale
+    if (requestedScale <= 0f) return 1f
+    // A request already under the floor is the user's explicit choice, so honour it.
+    if (requestedScale <= PORTRAIT_MIN_CONTROL_SCALE) return requestedScale
+    val viewportHeight = (windowWidthDp - 2f * PORTRAIT_HORIZONTAL_INSET_DP) / GBA_SCREEN_ASPECT
+    val roomForControls = windowHeightDp - viewportHeight - PORTRAIT_CHROME_DP
+    // Band height = SLOPE * scale, so the largest affordable scale is a straight solve.
+    val affordable = roomForControls / PORTRAIT_CONTROL_BAND_SLOPE_DP
+    return affordable.coerceIn(PORTRAIT_MIN_CONTROL_SCALE, requestedScale)
+}
+
+/** Column padding, gaps and the fixed-size bottom label row, in dp. */
+private const val PORTRAIT_CHROME_DP = 89f
+
+/**
+ * Height of the portrait control band per unit of `scale`: the D-pad (146 dp) dominates the
+ * A-B block (128 dp) and the shoulder row adds another 34 dp.
+ */
+private const val PORTRAIT_CONTROL_BAND_SLOPE_DP = 180f
+
+/** Portrait D-pad size and the A-B bounding box at `scale = 1.0`. */
+private const val PORTRAIT_DPAD_DP = 146f
+private const val PORTRAIT_AB_BOX_WIDTH_DP = 154f
+private const val PORTRAIT_AB_BOX_HEIGHT_DP = 128f
+
+/** Never shrink the portrait controls past this, however short the window is. */
+private const val PORTRAIT_MIN_CONTROL_SCALE = 0.82f
+
+/** Horizontal padding of the portrait column. */
+private const val PORTRAIT_HORIZONTAL_INSET_DP = 8f
+
+/**
+ * Native GBA aspect ratio (240x160). The portrait viewport box is locked to it so the SurfaceView
+ * is already the right shape; `GlVideoRenderer` then fills it edge to edge instead of
+ * letterboxing inside a box of some other ratio.
+ */
+private const val GBA_SCREEN_ASPECT = 1.5f
+
 @Composable
 internal fun PortraitHandheldLayout(
     tracker: TouchInputTracker,
@@ -438,30 +490,35 @@ internal fun PortraitHandheldLayout(
     screenViewport: @Composable () -> Unit,
 ) {
     val opacity = profile.opacity
-    val scale = profile.scale
+    // The user's slider stays the ceiling; on short screens the controls give height back to the
+    // viewport instead of squeezing it or spilling off the bottom of the window.
+    val windowConfiguration = LocalConfiguration.current
+    val scale = portraitControlScale(
+        requestedScale = profile.scale,
+        windowWidthDp = windowConfiguration.screenWidthDp.toFloat(),
+        windowHeightDp = windowConfiguration.screenHeightDp.toFloat(),
+    )
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = PORTRAIT_HORIZONTAL_INSET_DP.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // The screen sits flush at the top and takes the full width: at 3:2 that is the largest
+        // the game can be without stretching or cropping, because 3:2 fixes height = width/1.5.
+        // It is deliberately *not* centred inside a weighted slot: on a tall phone that left a
+        // dead shell band above the viewport (the gap the owner circled), with the game floating
+        // in the middle of the shell.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.50f),
-            contentAlignment = Alignment.Center,
+                .aspectRatio(GBA_SCREEN_ASPECT),
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1.42f, matchHeightConstraintsFirst = false),
-            ) {
-                screenViewport()
-            }
+            screenViewport()
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(6.dp))
 
         Row(
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -494,14 +551,18 @@ internal fun PortraitHandheldLayout(
             )
         }
 
-        Spacer(Modifier.height(16.dp))
+        // Whatever vertical space the 3:2 screen cannot use is spent here, between the shoulder
+        // row and the thumb controls, so the screen stays at the top and the controls stay within
+        // thumb reach at the bottom (as in the reference hardware).
+        Spacer(Modifier.weight(1f))
 
+        // Fixed-height control block: the D-pad sets the row height so the screen above keeps a
+        // stable share of the window regardless of how tall the phone is.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.32f)
                 .padding(horizontal = 8.dp),
         ) {
             HandheldDPad(
@@ -510,7 +571,7 @@ internal fun PortraitHandheldLayout(
                 onInputChanged = onInputChanged,
                 interactive = interactive,
                 opacity = opacity,
-                sizeDp = (146f * scale).dp,
+                sizeDp = (PORTRAIT_DPAD_DP * scale).dp,
                 modifier = Modifier.offset(
                     x = profile.dpadOffsetXdp.dp,
                     y = profile.dpadOffsetYdp.dp,
@@ -519,17 +580,19 @@ internal fun PortraitHandheldLayout(
 
             Box(
                 modifier = Modifier
-                    .width((154f * scale).dp)
-                    .height((128f * scale).dp)
+                    .width((PORTRAIT_AB_BOX_WIDTH_DP * scale).dp)
+                    .height((PORTRAIT_AB_BOX_HEIGHT_DP * scale).dp)
                     .offset(
                         x = profile.buttonsOffsetXdp.dp,
                         y = profile.buttonsOffsetYdp.dp,
                     ),
             ) {
+                // A sits low and inboard, B sits high and outboard: the owner's direction for
+                // this round, matching the handheld they pointed at.
                 HandheldActionButton(
-                    button = VirtualButton.B,
+                    button = VirtualButton.A,
                     tracker = tracker,
-                    isPressed = VirtualButton.B in pressedButtons,
+                    isPressed = VirtualButton.A in pressedButtons,
                     onInputChanged = onInputChanged,
                     interactive = interactive,
                     opacity = opacity,
@@ -539,9 +602,9 @@ internal fun PortraitHandheldLayout(
                         .offset(x = 2.dp, y = (-4).dp),
                 )
                 HandheldActionButton(
-                    button = VirtualButton.A,
+                    button = VirtualButton.B,
                     tracker = tracker,
-                    isPressed = VirtualButton.A in pressedButtons,
+                    isPressed = VirtualButton.B in pressedButtons,
                     onInputChanged = onInputChanged,
                     interactive = interactive,
                     opacity = opacity,
@@ -700,10 +763,12 @@ internal fun LandscapeHandheldLayout(
                             y = profile.buttonsOffsetYdp.dp,
                         ),
                 ) {
+                    // Same diagonal as portrait (and as the hardware): A low and inboard,
+                    // B high and outboard.
                     HandheldActionButton(
-                        button = VirtualButton.B,
+                        button = VirtualButton.A,
                         tracker = tracker,
-                        isPressed = VirtualButton.B in pressedButtons,
+                        isPressed = VirtualButton.A in pressedButtons,
                         onInputChanged = onInputChanged,
                         interactive = interactive,
                         opacity = opacity,
@@ -711,9 +776,9 @@ internal fun LandscapeHandheldLayout(
                         modifier = Modifier.align(Alignment.BottomStart),
                     )
                     HandheldActionButton(
-                        button = VirtualButton.A,
+                        button = VirtualButton.B,
                         tracker = tracker,
-                        isPressed = VirtualButton.A in pressedButtons,
+                        isPressed = VirtualButton.B in pressedButtons,
                         onInputChanged = onInputChanged,
                         interactive = interactive,
                         opacity = opacity,
