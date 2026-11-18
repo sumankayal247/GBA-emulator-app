@@ -133,4 +133,32 @@ class PortraitControlScaleTest {
             assertEquals("lost the reference bezel at ${w}x$h", full, frame, 0.5f)
         }
     }
+
+    @Test
+    fun degenerateWindowsNeverThrow() {
+        // Regression guard: the frame-height clamp used to pass an inverted range to coerceIn for
+        // any window narrower than 2*inset, which throws IllegalArgumentException. Window
+        // measurement really does produce near-zero widths, so this must never be an exception.
+        val widths = listOf(0f, 0.001f, 1f, 10f, 15f, 16f, 20f, 393f, -5f)
+        val heights = listOf(0f, 0.001f, 1f, 10f, 100f, 392f, 891f)
+        for (w in widths) {
+            for (h in heights) {
+                val frame = portraitBezelHeightDpForWindow(w, h)
+                val scale = portraitControlScale(1f, w, h)
+                assertTrue("frame NaN/negative at ${w}x$h: $frame", !frame.isNaN() && frame >= 0f)
+                assertTrue("scale NaN at ${w}x$h: $scale", !scale.isNaN() && scale >= 0f)
+            }
+        }
+    }
+
+    @Test
+    fun frameHeightIsNeverNegativeOrZeroForRealWindows() {
+        // A zero-height frame would collapse the screen; make sure ordinary windows never hit it.
+        listOf(236f to 392f, 360f to 480f, 393f to 780f, 411f to 891f, 1200f to 2000f).forEach { (w, h) ->
+            assertTrue(
+                "frame collapsed at ${w}x$h: ${portraitBezelHeightDpForWindow(w, h)}",
+                portraitBezelHeightDpForWindow(w, h) > 0f,
+            )
+        }
+    }
 }

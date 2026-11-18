@@ -52,7 +52,7 @@ internal const val PORTRAIT_MIN_ZONE_DP = 210f
 
 /** Full-width frame height at the reference aspect, before any squeeze. */
 internal fun portraitBezelHeightDp(windowWidthDp: Float): Float =
-    (windowWidthDp - 2f * PORTRAIT_HORIZONTAL_INSET_DP) / SCREEN_BEZEL_ASPECT
+    ((windowWidthDp - 2f * PORTRAIT_HORIZONTAL_INSET_DP) / SCREEN_BEZEL_ASPECT).coerceAtLeast(0f)
 
 /**
  * Frame height for a window, reduced when the tall reference frame would starve the controls.
@@ -66,8 +66,18 @@ internal fun portraitBezelHeightDpForWindow(windowWidthDp: Float, windowHeightDp
     val full = portraitBezelHeightDp(windowWidthDp)
     val minimum = (windowWidthDp - 2f * PORTRAIT_HORIZONTAL_INSET_DP) / GBA_SCREEN_ASPECT
     if (windowHeightDp <= 0f) return full
+    // Guard the degenerate window before clamping. For any width under 2*inset both bounds are
+    // negative, and because 1.06 < 1.5 the "minimum" ends up LARGER than `full`, which makes
+    // coerceIn throw "Cannot coerce value to an empty range". A zero/extremely small width is a
+    // real state during window measurement, so this must not be an exception path.
+    val safeFull = full.coerceAtLeast(0f)
+    // min(...) rather than coerceIn(0f, safeFull): when safeFull is exactly 0 that range is
+    // empty too, and coerceIn would throw for the same reason.
+    val safeMinimum = minOf(minimum, safeFull).coerceAtLeast(0f)
     val roomForFrame = windowHeightDp - PORTRAIT_MIN_ZONE_DP - PORTRAIT_CHROME_DP
-    return roomForFrame.coerceIn(minimum, full)
+    if (roomForFrame <= safeMinimum) return safeMinimum
+    if (roomForFrame >= safeFull) return safeFull
+    return roomForFrame
 }
 
 /**
