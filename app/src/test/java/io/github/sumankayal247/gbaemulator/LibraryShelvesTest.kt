@@ -38,7 +38,7 @@ class LibraryShelvesTest {
         val recents = LibraryShelves.recents(games)
 
         assertEquals(LibraryShelves.MAX_ITEMS, recents.size)
-        assertEquals("Game 2", recents.first().effectiveTitle)
+        assertEquals("Newest", recents.first().effectiveTitle)
         assertFalse(recents.any { it.effectiveTitle == "Never played" })
         assertTrue(recents.zipWithNext().all { (a, b) -> a.lastPlayedEpochMs >= b.lastPlayedEpochMs })
     }
