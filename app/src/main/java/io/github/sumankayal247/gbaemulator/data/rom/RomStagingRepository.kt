@@ -10,6 +10,7 @@ import io.github.sumankayal247.gbaemulator.domain.model.RomRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 
 data class StagedRom(
     val record: RomRecord,
@@ -78,12 +79,16 @@ class RomStagingRepository(private val context: Context) {
 
     /**
      * Resolves a previously opened [RomRecord] back to a readable staged file.
-     * Re-stages from SAF URI if the cache was cleared by Android; reports a recoverable
-     * [EmulatorError.MissingSourceFile] if permission was revoked or the file was moved.
+     * Re-stages from its SAF URI or granted filesystem path if the cache was cleared by Android;
+     * reports a recoverable [EmulatorError.MissingSourceFile] if permission was revoked or moved.
      */
     suspend fun resolveForLaunch(record: RomRecord): AppResult<File> = withContext(Dispatchers.IO) {
         val uri = Uri.parse(record.sourceUri)
         val cached = File(stagingDir, "${record.romId}.${record.system.fileExtension}")
+
+        if (uri.scheme?.equals("file", ignoreCase = true) == true) {
+            return@withContext resolveFileSource(record, uri, cached)
+        }
 
         // Verify source URI is still readable when possible, or re-stage from SAF if cache evicted.
         val sourceReadable = isUriReadable(uri)
@@ -114,7 +119,74 @@ class RomStagingRepository(private val context: Context) {
         isUriReadable(Uri.parse(sourceUri))
     }
 
+    /** Re-stage a file-backed ROM discovered by the optional device scan (ADR-0006). */
+    private suspend fun resolveFileSource(
+        record: RomRecord,
+        uri: Uri,
+        cached: File,
+    ): AppResult<File> = withContext(Dispatchers.IO) {
+        val path = uri.path
+        if (path.isNullOrBlank()) {
+            return@withContext AppResult.Failure(
+                EmulatorError.MissingSourceFile(
+                    record.romId,
+                    "Stored ROM path is invalid. Use Relink ROM to choose the file again.",
+                ),
+            )
+        }
+        val source = File(path)
+        if (!source.isFile || !source.canRead() || source.length() != record.fileSizeBytes) {
+            return@withContext AppResult.Failure(
+                EmulatorError.MissingSourceFile(
+                    record.romId,
+                    "ROM file is missing, changed, or no longer readable. Use Relink ROM; saves are kept safe.",
+                ),
+            )
+        }
+        if (cached.exists() && cached.length() == record.fileSizeBytes) {
+            cached.setLastModified(System.currentTimeMillis())
+            return@withContext AppResult.Success(cached)
+        }
+
+        val input = try {
+            FileInputStream(source)
+        } catch (_: SecurityException) {
+            return@withContext AppResult.Failure(
+                EmulatorError.MissingSourceFile(
+                    record.romId,
+                    "Storage permission was revoked for this ROM. Restore access or relink it; saves are safe.",
+                ),
+            )
+        } catch (_: Exception) {
+            return@withContext AppResult.Failure(
+                EmulatorError.MissingSourceFile(record.romId, "Could not open the ROM file."),
+            )
+        }
+
+        when (val validated = input.use { RomIngestionValidator.stageAndValidate(it, source.name, stagingDir) }) {
+            is AppResult.Failure -> validated
+            is AppResult.Success -> {
+                if (validated.value.romId != record.romId) {
+                    validated.value.stagedFile.delete()
+                    AppResult.Failure(
+                        EmulatorError.MissingSourceFile(
+                            record.romId,
+                            "ROM contents changed since it was indexed. Relink it to keep saves correctly scoped.",
+                        ),
+                    )
+                } else {
+                    pruneOldStagedFiles(validated.value.stagedFile)
+                    AppResult.Success(validated.value.stagedFile)
+                }
+            }
+        }
+    }
+
     private fun isUriReadable(uri: Uri): Boolean {
+        if (uri.scheme?.equals("file", ignoreCase = true) == true) {
+            val path = uri.path ?: return false
+            return runCatching { File(path).isFile && File(path).canRead() }.getOrDefault(false)
+        }
         return try {
             context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } ?: false
         } catch (_: Exception) {

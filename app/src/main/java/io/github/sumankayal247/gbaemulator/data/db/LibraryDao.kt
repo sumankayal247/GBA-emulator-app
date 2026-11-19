@@ -71,6 +71,9 @@ interface LibraryDao {
     @Query("UPDATE rom_sources SET is_available = 0 WHERE tree_uri = :treeUri AND last_seen_ms < :scanStartedMs")
     suspend fun markStaleSourcesUnavailableInTree(treeUri: String, scanStartedMs: Long)
 
+    @Query("UPDATE rom_sources SET is_available = 0 WHERE source_uri LIKE 'file:%'")
+    suspend fun markFileSourcesUnavailable()
+
     @Query("DELETE FROM rom_sources WHERE tree_uri = :treeUri")
     suspend fun deleteSourcesForTree(treeUri: String)
 

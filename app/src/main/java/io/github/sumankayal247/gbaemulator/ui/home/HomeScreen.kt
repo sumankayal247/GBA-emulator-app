@@ -31,7 +31,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
@@ -98,6 +97,8 @@ fun HomeScreen(
     onPickFolder: () -> Unit,
     onImportSingleRom: () -> Unit,
     onQuickScan: () -> Unit,
+    onScanDevice: () -> Unit,
+    onRequestStorageAccess: () -> Unit,
     onCancelScan: () -> Unit,
     onSearchChange: (String) -> Unit,
     onFilterChange: (LibraryFilter) -> Unit,
@@ -240,7 +241,11 @@ fun HomeScreen(
                     }
 
                     Button(
-                        onClick = if (state.isScanningFolders) onCancelScan else onQuickScan,
+                        onClick = when {
+                            state.isScanningFolders -> onCancelScan
+                            state.hasStorageAccess -> onScanDevice
+                            else -> onRequestStorageAccess
+                        },
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = EmulatorColors.AccentBlue.copy(alpha = 0.22f),
@@ -264,25 +269,46 @@ fun HomeScreen(
                                 modifier = Modifier.size(16.dp),
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text("Quick scan", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                text = if (state.hasStorageAccess) "Scan device" else "Grant storage access",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
                         }
                     }
                 }
 
                 Spacer(Modifier.height(4.dp))
-                TextButton(
-                    onClick = onImportSingleRom,
-                    modifier = Modifier.height(32.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.FolderOpen,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Import a single ROM file instead", color = EmulatorColors.TextSecondary)
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    TextButton(
+                        onClick = onQuickScan,
+                        enabled = !state.isScanningFolders,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            "Scan selected folders only",
+                            color = EmulatorColors.AccentCyan,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    TextButton(
+                        onClick = onImportSingleRom,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            "Import single ROM file",
+                            color = EmulatorColors.TextSecondary,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                 }
 
+                if (!state.hasStorageAccess) {
+                    Text(
+                        text = "Device-wide scan needs one-time storage access. Declining keeps folder and single-file import available.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = EmulatorColors.TextMuted,
+                    )
+                }
                 if (state.savedFolders.isEmpty()) {
                     Text(
                         text = "In the system folder picker, open Internal storage and tap “Use this folder” to confirm.",

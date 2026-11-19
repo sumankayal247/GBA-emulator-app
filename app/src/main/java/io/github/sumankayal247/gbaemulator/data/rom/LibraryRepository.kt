@@ -142,9 +142,23 @@ class LibraryRepository(
         staged: StagedRom,
         treeUri: String? = null,
         markPlayedNow: Boolean = false,
+    ): RomRecord = indexRomRecord(staged.record, treeUri, markPlayedNow)
+
+    /**
+     * Adds a filesystem-discovered ROM as an additional source for its existing content-hash
+     * identity, preserving favourites, custom titles, covers, and saves (ADR-0006).
+     */
+    suspend fun indexDiscoveredRom(
+        record: RomRecord,
+        treeUri: String? = null,
+    ): RomRecord = indexRomRecord(record, treeUri, markPlayedNow = false)
+
+    private suspend fun indexRomRecord(
+        rec: RomRecord,
+        treeUri: String?,
+        markPlayedNow: Boolean,
     ): RomRecord = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        val rec = staged.record
         val hasSave = sramRepository.hasSave(rec.system, rec.sha256)
         val existing = dao.getGame(rec.romId)
 
@@ -506,6 +520,11 @@ class LibraryRepository(
      */
     suspend fun clearRecentHistory(romId: String) = withContext(Dispatchers.IO) {
         dao.clearLastPlayed(romId)
+    }
+
+    /** Called when broad storage access is declined/revoked so file-backed sources show a warning. */
+    suspend fun markDeviceSourcesUnavailable() = withContext(Dispatchers.IO) {
+        dao.markFileSourcesUnavailable()
     }
 
     suspend fun setCustomTitle(romId: String, title: String?) = withContext(Dispatchers.IO) {
