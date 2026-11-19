@@ -24,21 +24,25 @@ object DeviceRomWalker {
         "sys",
     )
 
+    enum class CandidateOutcome { INDEXED, DUPLICATE, SKIPPED }
+
     data class Report(
         val inspectedFiles: Int,
         val discoveredGames: Int,
+        val duplicateGames: Int,
         val skippedFiles: Int,
         val warnings: List<String>,
     )
 
     suspend fun scan(
         roots: List<File>,
-        inspect: suspend (File) -> Boolean,
+        inspect: suspend (File) -> CandidateOutcome,
     ): Report {
         val visitedDirectories = HashSet<String>()
         val warnings = mutableListOf<String>()
         var inspectedFiles = 0
         var discoveredGames = 0
+        var duplicateGames = 0
         var skippedFiles = 0
 
         suspend fun walk(directory: File, depth: Int) {
@@ -72,7 +76,11 @@ object DeviceRomWalker {
                     val extension = child.name.substringAfterLast('.', "").lowercase()
                     if (extension !in SUPPORTED_EXTENSIONS) continue
                     inspectedFiles++
-                    if (inspect(child)) discoveredGames++ else skippedFiles++
+                    when (inspect(child)) {
+                        CandidateOutcome.INDEXED -> discoveredGames++
+                        CandidateOutcome.DUPLICATE -> duplicateGames++
+                        CandidateOutcome.SKIPPED -> skippedFiles++
+                    }
                 }
             }
         }
@@ -85,6 +93,7 @@ object DeviceRomWalker {
         return Report(
             inspectedFiles = inspectedFiles,
             discoveredGames = discoveredGames,
+            duplicateGames = duplicateGames,
             skippedFiles = skippedFiles,
             warnings = warnings.distinct(),
         )

@@ -14,8 +14,10 @@ import java.io.File
 data class DeviceScanReport(
     val inspectedFiles: Int,
     val discoveredGames: Int,
+    val duplicateGames: Int,
     val skippedFiles: Int,
     val warnings: List<String>,
+    val newGames: Int,
 )
 
 /**
@@ -43,11 +45,19 @@ class DeviceStorageScanner(
             )
         }
 
+        val deduplicator = ScanDeduplicator()
+        var newGames = 0
         val walkReport = DeviceRomWalker.scan(roots) { file ->
             val inspected = RomIngestionValidator.inspectFile(file)
-            if (inspected !is AppResult.Success) return@scan false
+            if (inspected !is AppResult.Success) {
+                return@scan DeviceRomWalker.CandidateOutcome.SKIPPED
+            }
 
             val v = inspected.value
+            if (!deduplicator.accept(v.romId)) {
+                return@scan DeviceRomWalker.CandidateOutcome.DUPLICATE
+            }
+
             val record = RomRecord(
                 romId = v.romId,
                 sha256 = v.sha256,
@@ -59,12 +69,12 @@ class DeviceStorageScanner(
                 sourceAvailable = true,
             )
             try {
-                libraryRepository.indexDiscoveredRom(record)
-                true
+                if (libraryRepository.indexDiscoveredRom(record).isNewGame) newGames++
+                DeviceRomWalker.CandidateOutcome.INDEXED
             } catch (ce: CancellationException) {
                 throw ce
             } catch (_: Exception) {
-                false
+                DeviceRomWalker.CandidateOutcome.SKIPPED
             }
         }
 
@@ -72,8 +82,10 @@ class DeviceStorageScanner(
             DeviceScanReport(
                 inspectedFiles = walkReport.inspectedFiles,
                 discoveredGames = walkReport.discoveredGames,
+                duplicateGames = walkReport.duplicateGames,
                 skippedFiles = walkReport.skippedFiles,
                 warnings = walkReport.warnings,
+                newGames = newGames,
             ),
         )
     }

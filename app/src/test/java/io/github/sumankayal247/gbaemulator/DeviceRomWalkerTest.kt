@@ -1,6 +1,8 @@
 package io.github.sumankayal247.gbaemulator
 
 import io.github.sumankayal247.gbaemulator.data.rom.DeviceRomWalker
+import io.github.sumankayal247.gbaemulator.data.rom.DeviceRomWalker.CandidateOutcome
+import io.github.sumankayal247.gbaemulator.data.rom.ScanDeduplicator
 import io.github.sumankayal247.gbaemulator.data.rom.RomIngestionValidator
 import io.github.sumankayal247.gbaemulator.domain.model.AppResult
 import kotlinx.coroutines.test.runTest
@@ -54,14 +56,45 @@ class DeviceRomWalkerTest {
         val inspectedNames = mutableListOf<String>()
         val report = DeviceRomWalker.scan(listOf(root)) { file ->
             inspectedNames.add(file.name)
-            RomIngestionValidator.inspectFile(file) is AppResult.Success
+            if (RomIngestionValidator.inspectFile(file) is AppResult.Success) {
+                CandidateOutcome.INDEXED
+            } else {
+                CandidateOutcome.SKIPPED
+            }
         }
 
         assertEquals(2, report.inspectedFiles)
         assertEquals(2, report.discoveredGames)
+        assertEquals(0, report.duplicateGames)
         assertEquals(0, report.skippedFiles)
         assertTrue(report.warnings.isEmpty())
         assertEquals(listOf("Color.gbc", "Homebrew.gba"), inspectedNames.sorted())
+    }
+
+    @Test
+    fun duplicateCopiesOfSameRomAreCountedOnce() = runTest {
+        val root = tempFolder.newFolder("duplicates")
+        writeValidGba(File(root, "Alpha.gba"), seed = 3)
+        writeValidGba(File(root, "Alpha Copy.gba"), seed = 3)
+        writeValidGba(File(root, "Other.gba"), seed = 4)
+
+        val deduplicator = ScanDeduplicator()
+        val report = DeviceRomWalker.scan(listOf(root)) { file ->
+            val inspected = RomIngestionValidator.inspectFile(file)
+            if (inspected !is AppResult.Success) {
+                CandidateOutcome.SKIPPED
+            } else if (!deduplicator.accept(inspected.value.romId)) {
+                CandidateOutcome.DUPLICATE
+            } else {
+                CandidateOutcome.INDEXED
+            }
+        }
+
+        assertEquals(3, report.inspectedFiles)
+        assertEquals(2, report.discoveredGames)
+        assertEquals(1, report.duplicateGames)
+        assertEquals(0, report.skippedFiles)
+        assertEquals(2, deduplicator.uniqueCount)
     }
 
     @Test

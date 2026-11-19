@@ -36,7 +36,24 @@ data class FolderScanReport(
     val discoveredGames: Int,
     val skippedFiles: Int,
     val warnings: List<String>,
+    val newGames: Int = 0,
+    val duplicateGames: Int = 0,
 )
+
+data class IndexedRom(
+    val record: RomRecord,
+    val isNewGame: Boolean,
+    val isNewSource: Boolean,
+) {
+    val romId: String
+        get() = record.romId
+}
+
+private sealed interface ScanIndexOutcome {
+    data class Indexed(val rom: IndexedRom) : ScanIndexOutcome
+    object Duplicate : ScanIndexOutcome
+    object Skipped : ScanIndexOutcome
+}
 
 /**
  * Unified Room-backed P3 library repository managing:
@@ -142,7 +159,7 @@ class LibraryRepository(
         staged: StagedRom,
         treeUri: String? = null,
         markPlayedNow: Boolean = false,
-    ): RomRecord = indexRomRecord(staged.record, treeUri, markPlayedNow)
+    ): RomRecord = indexRomRecord(staged.record, treeUri, markPlayedNow).record
 
     /**
      * Adds a filesystem-discovered ROM as an additional source for its existing content-hash
@@ -151,16 +168,19 @@ class LibraryRepository(
     suspend fun indexDiscoveredRom(
         record: RomRecord,
         treeUri: String? = null,
-    ): RomRecord = indexRomRecord(record, treeUri, markPlayedNow = false)
+    ): IndexedRom = indexRomRecord(record, treeUri, markPlayedNow = false)
 
     private suspend fun indexRomRecord(
         rec: RomRecord,
         treeUri: String?,
         markPlayedNow: Boolean,
-    ): RomRecord = withContext(Dispatchers.IO) {
+    ): IndexedRom = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val hasSave = sramRepository.hasSave(rec.system, rec.sha256)
         val existing = dao.getGame(rec.romId)
+        val existingSource = dao.getSource(rec.sourceUri)
+        val isNewGame = existing == null
+        val isNewSource = existingSource == null || existingSource.romId != rec.romId
 
         if (existing == null) {
             dao.insertGameIfAbsent(
@@ -199,21 +219,25 @@ class LibraryRepository(
         )
 
         val updated = dao.getGame(rec.romId)
-        RomRecord(
-            romId = rec.romId,
-            sha256 = rec.sha256,
-            system = rec.system,
-            displayTitle = updated?.canonicalTitle ?: rec.displayTitle,
-            sourceUri = rec.sourceUri,
-            fileSizeBytes = rec.fileSizeBytes,
-            lastPlayedEpochMs = updated?.lastPlayedMs ?: if (markPlayedNow) now else 0L,
-            hasBatterySave = (updated?.hasBatterySave ?: false) || hasSave,
-            sourceAvailable = true,
-            customTitle = updated?.customTitle,
-            coverUri = updated?.coverUri,
-            isFavorite = updated?.isFavorite ?: false,
-            dateAddedEpochMs = updated?.dateAddedMs ?: now,
-            totalPlayTimeMs = updated?.totalPlayTimeMs ?: 0L,
+        IndexedRom(
+            record = RomRecord(
+                romId = rec.romId,
+                sha256 = rec.sha256,
+                system = rec.system,
+                displayTitle = updated?.canonicalTitle ?: rec.displayTitle,
+                sourceUri = rec.sourceUri,
+                fileSizeBytes = rec.fileSizeBytes,
+                lastPlayedEpochMs = updated?.lastPlayedMs ?: if (markPlayedNow) now else 0L,
+                hasBatterySave = (updated?.hasBatterySave ?: false) || hasSave,
+                sourceAvailable = true,
+                customTitle = updated?.customTitle,
+                coverUri = updated?.coverUri,
+                isFavorite = updated?.isFavorite ?: false,
+                dateAddedEpochMs = updated?.dateAddedMs ?: now,
+                totalPlayTimeMs = updated?.totalPlayTimeMs ?: 0L,
+            ),
+            isNewGame = isNewGame,
+            isNewSource = isNewSource,
         )
     }
 
@@ -286,21 +310,30 @@ class LibraryRepository(
 
     suspend fun scanAllSavedFolders(): List<FolderScanReport> = withContext(Dispatchers.IO) {
         val folders = dao.getAllSavedFolders()
+        val deduplicator = ScanDeduplicator()
         folders.mapNotNull { folder ->
             val uri = runCatching { Uri.parse(folder.treeUri) }.getOrNull() ?: return@mapNotNull null
-            when (val res = scanFolder(uri)) {
+            when (val res = scanFolder(uri, deduplicator)) {
                 is AppResult.Success -> res.value
                 is AppResult.Failure -> FolderScanReport(
                     treeUri = folder.treeUri,
                     discoveredGames = 0,
                     skippedFiles = 0,
                     warnings = listOf(res.error.userMessage),
+                    newGames = 0,
+                    duplicateGames = 0,
                 )
             }
         }
     }
 
-    suspend fun scanFolder(treeUri: Uri): AppResult<FolderScanReport> = withContext(Dispatchers.IO) {
+    suspend fun scanFolder(treeUri: Uri): AppResult<FolderScanReport> =
+        scanFolder(treeUri, ScanDeduplicator())
+
+    private suspend fun scanFolder(
+        treeUri: Uri,
+        deduplicator: ScanDeduplicator,
+    ): AppResult<FolderScanReport> = withContext(Dispatchers.IO) {
         val scanStartedMs = System.currentTimeMillis()
         val treeUriStr = treeUri.toString()
         val rootDocId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
@@ -310,6 +343,8 @@ class LibraryRepository(
 
         val warnings = mutableListOf<String>()
         var discoveredCount = 0
+        var newGameCount = 0
+        var duplicateCount = 0
         var skippedCount = 0
         var inspectedCount = 0
 
@@ -376,11 +411,20 @@ class LibraryRepository(
                     }
 
                     val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childId)
-                    val indexed = inspectAndIndexDocument(docUri, treeUriStr, name, scanStartedMs)
-                    if (indexed) {
-                        discoveredCount++
-                    } else {
-                        skippedCount++
+                    when (
+                        val outcome = inspectAndIndexDocument(
+                            docUri,
+                            treeUriStr,
+                            name,
+                            deduplicator,
+                        )
+                    ) {
+                        is ScanIndexOutcome.Indexed -> {
+                            discoveredCount++
+                            if (outcome.rom.isNewGame) newGameCount++
+                        }
+                        ScanIndexOutcome.Duplicate -> duplicateCount++
+                        ScanIndexOutcome.Skipped -> skippedCount++
                     }
                 }
             }
@@ -419,6 +463,8 @@ class LibraryRepository(
                 discoveredGames = discoveredCount,
                 skippedFiles = skippedCount,
                 warnings = warnings,
+                newGames = newGameCount,
+                duplicateGames = duplicateCount,
             ),
         )
     }
@@ -431,14 +477,14 @@ class LibraryRepository(
         docUri: Uri,
         treeUriStr: String,
         displayName: String,
-        seenEpochMs: Long,
-    ): Boolean {
+        deduplicator: ScanDeduplicator,
+    ): ScanIndexOutcome {
         val extRes = RomIngestionValidator.validateExtension(displayName)
-        if (extRes !is AppResult.Success) return false
+        if (extRes !is AppResult.Success) return ScanIndexOutcome.Skipped
         val extSystem = extRes.value
 
         val stream = runCatching { context.contentResolver.openInputStream(docUri) }.getOrNull()
-            ?: return false
+            ?: return ScanIndexOutcome.Skipped
 
         val headerBuf = ByteArray(1024)
         var headerFilled = 0
@@ -452,7 +498,7 @@ class LibraryRepository(
                     val read = input.read(chunk)
                     if (read <= 0) break
                     totalBytes += read
-                    if (totalBytes > extSystem.maxSizeBytes) return false
+                    if (totalBytes > extSystem.maxSizeBytes) return ScanIndexOutcome.Skipped
                     if (headerFilled < headerBuf.size) {
                         val copyLen = minOf(read, headerBuf.size - headerFilled)
                         System.arraycopy(chunk, 0, headerBuf, headerFilled, copyLen)
@@ -462,47 +508,30 @@ class LibraryRepository(
                 }
             }
         } catch (_: Exception) {
-            return false
+            return ScanIndexOutcome.Skipped
         }
 
         val headerRes = RomIngestionValidator.validateHeader(headerBuf, headerFilled, totalBytes, extSystem)
-        if (headerRes !is AppResult.Success) return false
+        if (headerRes !is AppResult.Success) return ScanIndexOutcome.Skipped
         val system = headerRes.value
 
         val shaHex = digest.digest().joinToString("") { "%02x".format(it) }
         val romId = RomRecord.buildRomId(system, shaHex)
-        val cleanTitle = RomIngestionValidator.deriveDisplayTitle(displayName)
-        val hasSave = sramRepository.hasSave(system, shaHex)
+        if (!deduplicator.accept(romId)) return ScanIndexOutcome.Duplicate
 
-        val existing = dao.getGame(romId)
-        if (existing == null) {
-            dao.insertGameIfAbsent(
-                GameEntity(
-                    romId = romId,
-                    sha256 = shaHex,
-                    system = system.id,
-                    canonicalTitle = cleanTitle,
-                    dateAddedMs = seenEpochMs,
-                    lastPlayedMs = 0L,
-                    fileSizeBytes = totalBytes,
-                    hasBatterySave = hasSave,
-                ),
-            )
-        } else {
-            dao.refreshGameScannedMetadata(romId, cleanTitle, totalBytes, hasSave)
-        }
-
-        dao.upsertSource(
-            RomSourceEntity(
-                sourceUri = docUri.toString(),
-                romId = romId,
-                treeUri = treeUriStr,
-                displayName = displayName,
-                lastSeenMs = seenEpochMs,
-                isAvailable = true,
-            ),
+        val record = RomRecord(
+            romId = romId,
+            sha256 = shaHex,
+            system = system,
+            displayTitle = RomIngestionValidator.deriveDisplayTitle(displayName),
+            sourceUri = docUri.toString(),
+            fileSizeBytes = totalBytes,
+            lastPlayedEpochMs = 0L,
+            sourceAvailable = true,
         )
-        return true
+        return ScanIndexOutcome.Indexed(
+            indexRomRecord(record, treeUriStr, markPlayedNow = false),
+        )
     }
 
     suspend fun removeSavedFolder(treeUri: String) = withContext(Dispatchers.IO) {

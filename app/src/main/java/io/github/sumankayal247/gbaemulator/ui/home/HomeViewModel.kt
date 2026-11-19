@@ -213,7 +213,9 @@ class HomeViewModel(
                     is AppResult.Success -> {
                         val r = res.value
                         val warnText = if (r.warnings.isNotEmpty()) " (${r.warnings.first()})" else ""
-                        statusBanner.value = "Indexed ${r.discoveredGames} game(s) from folder.$warnText"
+                        statusBanner.value =
+                            "Folder scan: ${r.discoveredGames} unique ROM(s), " +
+                                "${r.newGames} new, ${r.duplicateGames} duplicate copies ignored.$warnText"
                     }
                 }
             } finally {
@@ -236,9 +238,14 @@ class HomeViewModel(
             try {
                 val reports = libraryRepository.scanAllSavedFolders()
                 val totalFound = reports.sumOf { it.discoveredGames }
+                val totalNew = reports.sumOf { it.newGames }
+                val totalDuplicates = reports.sumOf { it.duplicateGames }
                 val firstWarning = reports.flatMap { it.warnings }.firstOrNull()
                 statusBanner.value = buildString {
-                    append("Rescan complete: $totalFound ROM(s) verified.")
+                    append(
+                        "Folder rescan: $totalFound unique ROM(s), $totalNew new, " +
+                            "$totalDuplicates duplicate copies ignored.",
+                    )
                     if (firstWarning != null) append(" Warning: $firstWarning")
                 }
             } finally {
@@ -298,7 +305,10 @@ class HomeViewModel(
                         val r = res.value
                         val warning = r.warnings.firstOrNull()?.let { " Warning: $it" }.orEmpty()
                         statusBanner.value = buildString {
-                            append("Device scan complete: ${r.discoveredGames} new ROM(s) indexed, ")
+                            append(
+                                "Device scan: ${r.discoveredGames} unique ROM(s), " +
+                                    "${r.newGames} new, ${r.duplicateGames} duplicate copies ignored, ",
+                            )
                             append("${r.inspectedFiles} checked, ${r.skippedFiles} skipped.$warning")
                         }
                     }

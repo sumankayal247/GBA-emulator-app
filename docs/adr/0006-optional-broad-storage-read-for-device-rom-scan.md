@@ -42,6 +42,7 @@ Therefore a literal device-wide ROM scan requires a permission-model change. The
 - If access is declined or unavailable, keep SAF folder scanning and single-file import fully functional.
 - Scan files via `java.io.File`, bounded by depth/file count, skipping Android app-private directories and hidden directories, with symlink-loop protection.
 - Reuse `RomIngestionValidator` extension/header/size/SHA-256 checks; store `file://` absolute paths as additional `rom_sources` locators. ROM identity, SRAM, and save states stay unchanged.
+- Every scan deduplicates by `<system>:<sha256>` both within the scan and across repeated scans, so identical copies are ignored and reported as duplicates rather than creating another game entry or inflating "new" counts.
 - Advantages: actually finds ROMs across shared storage on supported devices; no schema migration; reversible.
 - Disadvantages / risks:
   - `MANAGE_EXTERNAL_STORAGE` is a restricted permission. Google Play requires an **All files access** declaration and a qualifying core use case; an emulator may not qualify. Release distribution may require a SAF-only build or a policy-approved declaration. Owner decision required before store submission.

@@ -62,6 +62,9 @@ interface LibraryDao {
     @Query("SELECT * FROM rom_sources WHERE rom_id = :romId ORDER BY is_available DESC, last_seen_ms DESC")
     suspend fun getSourcesForRom(romId: String): List<RomSourceEntity>
 
+    @Query("SELECT * FROM rom_sources WHERE source_uri = :sourceUri LIMIT 1")
+    suspend fun getSource(sourceUri: String): RomSourceEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSource(source: RomSourceEntity)
 
