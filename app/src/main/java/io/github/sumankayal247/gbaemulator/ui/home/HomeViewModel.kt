@@ -88,6 +88,18 @@ class HomeViewModel(
         val sort: LibrarySort,
     )
 
+    private data class BusyFlags(
+        val loading: Boolean,
+        val scanning: Boolean,
+        val storageAccess: Boolean,
+    )
+
+    private data class BannerState(
+        val status: String?,
+        val error: String?,
+        val relink: RomRecord?,
+    )
+
     private data class BusyAndBanners(
         val loading: Boolean,
         val scanning: Boolean,
@@ -103,14 +115,21 @@ class HomeViewModel(
         preferencesRepository.preferencesFlow,
         combine(searchQuery, filter, sort) { q, f, s -> QueryControls(q, f, s) },
         combine(
-            loadingRom,
-            scanningFolders,
-            storageAccess,
-            statusBanner,
-            errorBanner,
-            relinkNeeded,
-        ) { l, sc, access, st, err, rel ->
-            BusyAndBanners(l, sc, access, st, err, rel)
+            combine(loadingRom, scanningFolders, storageAccess) { l, sc, access ->
+                BusyFlags(l, sc, access)
+            },
+            combine(statusBanner, errorBanner, relinkNeeded) { st, err, rel ->
+                BannerState(st, err, rel)
+            },
+        ) { flags, banners ->
+            BusyAndBanners(
+                loading = flags.loading,
+                scanning = flags.scanning,
+                storageAccess = flags.storageAccess,
+                status = banners.status,
+                error = banners.error,
+                relink = banners.relink,
+            )
         },
     ) { games, folders, prefs, controls, busy ->
         val trimmedQuery = controls.query.trim().lowercase()
