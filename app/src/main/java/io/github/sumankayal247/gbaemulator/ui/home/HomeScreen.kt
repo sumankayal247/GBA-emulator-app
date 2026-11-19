@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
@@ -120,6 +122,10 @@ fun HomeScreen(
     var renamingGame by remember { mutableStateOf<RomRecord?>(null) }
     var deletingSavesFor by remember { mutableStateOf<RomRecord?>(null) }
     var seeAllSystem by remember { mutableStateOf<GameSystem?>(null) }
+    var folderPanelExpanded by remember { mutableStateOf(false) }
+    var searchExpanded by remember { mutableStateOf(false) }
+    var sortMenuExpanded by remember { mutableStateOf(false) }
+    val showSearch = searchExpanded || state.searchQuery.isNotBlank()
 
     Column(
         modifier = modifier
@@ -127,9 +133,9 @@ fun HomeScreen(
             .background(EmulatorColors.DarkBackground)
             .padding(horizontal = 16.dp),
     ) {
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(10.dp))
 
-        // Top Title Row matching 08-library-home.jpg
+        // Title + sort menu: sort options are preserved in a dropdown instead of a cycling pill.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -142,220 +148,274 @@ fun HomeScreen(
                 fontWeight = FontWeight.Bold,
             )
 
-            // Sort selector pill
-            Surface(
-                color = EmulatorColors.CardSurface,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier
-                    .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(10.dp))
-                    .clickable {
-                        val nextIdx = (state.sort.ordinal + 1) % LibrarySort.entries.size
-                        onSortChange(LibrarySort.entries[nextIdx])
-                    },
-            ) {
-                Text(
-                    text = "Sort: ${state.sort.label}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = EmulatorColors.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                )
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // Folder selection uses ACTION_OPEN_DOCUMENT_TREE (never a file picker), and the
-        // two actions are labelled so a folder cannot be confused with a single ROM file.
-        Surface(
-            color = EmulatorColors.CardSurface,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(14.dp)),
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(EmulatorColors.AccentBlue.copy(alpha = 0.16f))
-                            .clickable(onClick = onPickFolder),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Folder,
-                            contentDescription = "Choose ROM folder",
-                            tint = EmulatorColors.AccentBlue,
-                        )
-                    }
-
-                    Spacer(Modifier.width(12.dp))
-
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable(onClick = onPickFolder),
-                    ) {
-                        Text(
-                            text = "Game folder",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = EmulatorColors.TextPrimary,
-                        )
-                        val folderSummary = when (state.savedFolders.size) {
-                            0 -> "No folder selected yet"
-                            1 -> ".../${state.savedFolders.first().displayName}"
-                            else -> "${state.savedFolders.size} folders configured"
-                        }
-                        Text(
-                            text = folderSummary,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = EmulatorColors.AccentCyan,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+            Box {
+                Surface(
+                    color = EmulatorColors.CardSurface,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(10.dp))
+                        .clickable { sortMenuExpanded = true },
+                ) {
+                    Text(
+                        text = "Sort: ${state.sort.label}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = EmulatorColors.TextSecondary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    )
+                }
+                DropdownMenu(
+                    expanded = sortMenuExpanded,
+                    onDismissRequest = { sortMenuExpanded = false },
+                    containerColor = EmulatorColors.DialogBackground,
+                ) {
+                    LibrarySort.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option.label, color = EmulatorColors.TextPrimary) },
+                            onClick = {
+                                onSortChange(option)
+                                sortMenuExpanded = false
+                            },
                         )
                     }
                 }
+            }
+        }
 
-                Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(8.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onPickFolder,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = EmulatorColors.AccentBlue.copy(alpha = 0.22f),
-                            contentColor = EmulatorColors.AccentCyan,
-                        ),
+        // Collapsed folder toolbar: tap the folder row to expand all folder/scan/import actions.
+        Surface(
+            color = EmulatorColors.CardSurface,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(12.dp)),
+        ) {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .weight(1f)
-                            .height(40.dp),
+                            .clickable { folderPanelExpanded = !folderPanelExpanded },
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Folder,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
+                            contentDescription = "Folder and scan controls",
+                            tint = EmulatorColors.AccentBlue,
+                            modifier = Modifier.size(18.dp),
                         )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Select folder", style = MaterialTheme.typography.labelMedium)
-                    }
-
-                    Button(
-                        onClick = when {
-                            state.isScanningFolders -> onCancelScan
-                            state.hasStorageAccess -> onScanDevice
-                            else -> onRequestStorageAccess
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = EmulatorColors.AccentBlue.copy(alpha = 0.22f),
-                            contentColor = EmulatorColors.AccentCyan,
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp),
-                    ) {
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Game folder",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = EmulatorColors.TextPrimary,
+                            )
+                            val folderSummary = when (state.savedFolders.size) {
+                                0 -> "No folder selected yet"
+                                1 -> ".../${state.savedFolders.first().displayName}"
+                                else -> "${state.savedFolders.size} folders configured"
+                            }
+                            Text(
+                                text = if (state.isScanningFolders) "Scanning ROMs..." else folderSummary,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmulatorColors.AccentCyan,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
                         if (state.isScanningFolders) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 strokeWidth = 2.dp,
                                 color = EmulatorColors.AccentCyan,
                             )
-                            Spacer(Modifier.width(6.dp))
-                            Text("Cancel scan", style = MaterialTheme.typography.labelMedium)
                         } else {
-                            RadarLogo(
-                                tint = EmulatorColors.AccentCyan,
-                                modifier = Modifier.size(16.dp),
+                            Icon(
+                                imageVector = if (folderPanelExpanded) {
+                                    Icons.Filled.KeyboardArrowUp
+                                } else {
+                                    Icons.Filled.KeyboardArrowDown
+                                },
+                                contentDescription = if (folderPanelExpanded) "Collapse folder controls" else "Expand folder controls",
+                                tint = EmulatorColors.TextSecondary,
+                                modifier = Modifier.size(18.dp),
                             )
-                            Spacer(Modifier.width(6.dp))
+                        }
+                    }
+
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(26.dp)
+                            .background(EmulatorColors.CardBorder),
+                    )
+                    IconButton(
+                        onClick = {
+                            searchExpanded = if (showSearch && state.searchQuery.isEmpty()) false else true
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = if (showSearch) "Hide search" else "Search games",
+                            tint = EmulatorColors.TextSecondary,
+                        )
+                    }
+                }
+
+                if (folderPanelExpanded) {
+                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onPickFolder,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = EmulatorColors.AccentBlue.copy(alpha = 0.22f),
+                                    contentColor = EmulatorColors.AccentCyan,
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("Select folder", style = MaterialTheme.typography.labelMedium)
+                            }
+
+                            Button(
+                                onClick = when {
+                                    state.isScanningFolders -> onCancelScan
+                                    state.hasStorageAccess -> onScanDevice
+                                    else -> onRequestStorageAccess
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = EmulatorColors.AccentBlue.copy(alpha = 0.22f),
+                                    contentColor = EmulatorColors.AccentCyan,
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp),
+                            ) {
+                                if (state.isScanningFolders) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = EmulatorColors.AccentCyan,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Cancel scan", style = MaterialTheme.typography.labelMedium)
+                                } else {
+                                    RadarLogo(
+                                        tint = EmulatorColors.AccentCyan,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = if (state.hasStorageAccess) "Scan device" else "Grant storage access",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(4.dp))
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            TextButton(
+                                onClick = onQuickScan,
+                                enabled = !state.isScanningFolders,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    "Scan selected folders only",
+                                    color = EmulatorColors.AccentCyan,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                            TextButton(
+                                onClick = onImportSingleRom,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    "Import single ROM file",
+                                    color = EmulatorColors.TextSecondary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+
+                        if (!state.hasStorageAccess) {
                             Text(
-                                text = if (state.hasStorageAccess) "Scan device" else "Grant storage access",
-                                style = MaterialTheme.typography.labelMedium,
+                                text = "Device-wide scan needs one-time storage access. Declining keeps folder and single-file import available.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmulatorColors.TextMuted,
+                            )
+                        }
+                        if (state.savedFolders.isEmpty()) {
+                            Text(
+                                text = "In the system folder picker, open Internal storage and tap “Use this folder” to confirm.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmulatorColors.TextMuted,
                             )
                         }
                     }
                 }
-
-                Spacer(Modifier.height(4.dp))
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    TextButton(
-                        onClick = onQuickScan,
-                        enabled = !state.isScanningFolders,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(
-                            "Scan selected folders only",
-                            color = EmulatorColors.AccentCyan,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                    TextButton(
-                        onClick = onImportSingleRom,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(
-                            "Import single ROM file",
-                            color = EmulatorColors.TextSecondary,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                }
-
-                if (!state.hasStorageAccess) {
-                    Text(
-                        text = "Device-wide scan needs one-time storage access. Declining keeps folder and single-file import available.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = EmulatorColors.TextMuted,
-                    )
-                }
-                if (state.savedFolders.isEmpty()) {
-                    Text(
-                        text = "In the system folder picker, open Internal storage and tap “Use this folder” to confirm.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = EmulatorColors.TextMuted,
-                    )
-                }
             }
         }
 
-        Spacer(Modifier.height(10.dp))
-
-        // Search box
-        OutlinedTextField(
-            value = state.searchQuery,
-            onValueChange = onSearchChange,
-            placeholder = { Text("Search games...", color = EmulatorColors.TextMuted) },
-            leadingIcon = {
-                Icon(Icons.Filled.Search, contentDescription = null, tint = EmulatorColors.TextSecondary)
-            },
-            trailingIcon = if (state.searchQuery.isNotEmpty()) {
-                {
-                    IconButton(onClick = { onSearchChange("") }) {
-                        Icon(Icons.Filled.Close, contentDescription = "Clear search", tint = EmulatorColors.TextSecondary)
+        // Search stays full-width, but is only shown when requested or already in use.
+        if (showSearch) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = onSearchChange,
+                placeholder = { Text("Search games...", color = EmulatorColors.TextMuted) },
+                leadingIcon = {
+                    Icon(Icons.Filled.Search, contentDescription = null, tint = EmulatorColors.TextSecondary)
+                },
+                trailingIcon = if (state.searchQuery.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { onSearchChange("") }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear search", tint = EmulatorColors.TextSecondary)
+                        }
                     }
-                }
-            } else {
-                null
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = EmulatorColors.CardSurface,
-                unfocusedContainerColor = EmulatorColors.CardSurface,
-                focusedBorderColor = EmulatorColors.AccentBlue,
-                unfocusedBorderColor = EmulatorColors.CardBorder,
-                focusedTextColor = EmulatorColors.TextPrimary,
-                unfocusedTextColor = EmulatorColors.TextPrimary,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
+                } else {
+                    null
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = EmulatorColors.CardSurface,
+                    unfocusedContainerColor = EmulatorColors.CardSurface,
+                    focusedBorderColor = EmulatorColors.AccentBlue,
+                    unfocusedBorderColor = EmulatorColors.CardBorder,
+                    focusedTextColor = EmulatorColors.TextPrimary,
+                    unfocusedTextColor = EmulatorColors.TextPrimary,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+            )
+        }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
 
-        // System + Favorites filter chips
+        // Single horizontal filter row.
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             items(LibraryFilter.entries) { chip ->
@@ -372,13 +432,14 @@ fun HomeScreen(
                         selectedContainerColor = EmulatorColors.AccentBlue.copy(alpha = 0.25f),
                         selectedLabelColor = EmulatorColors.AccentCyan,
                     ),
+                    modifier = Modifier.height(34.dp),
                 )
             }
         }
 
         // Banners
         if (state.errorBanner != null) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             StatusCard(
                 message = state.errorBanner,
                 isError = true,
@@ -387,7 +448,7 @@ fun HomeScreen(
                 onDismiss = onDismissBanners,
             )
         } else if (state.statusBanner != null) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             StatusCard(
                 message = state.statusBanner,
                 isError = false,
@@ -398,7 +459,7 @@ fun HomeScreen(
         }
 
         if (state.isLoadingRom) {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
@@ -417,7 +478,7 @@ fun HomeScreen(
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(6.dp))
 
         if (state.allGames.isEmpty()) {
             EmptyLibraryCard(
@@ -450,7 +511,7 @@ fun HomeScreen(
 
             LazyColumn(
                 contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
