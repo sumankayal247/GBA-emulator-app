@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.github.sumankayal247.gbaemulator.AppContainer
 import io.github.sumankayal247.gbaemulator.data.preferences.PreferencesRepository
+import io.github.sumankayal247.gbaemulator.data.rom.DeviceStorageScanner
 import io.github.sumankayal247.gbaemulator.data.rom.LibraryRepository
 import io.github.sumankayal247.gbaemulator.data.rom.RomStagingRepository
 import io.github.sumankayal247.gbaemulator.data.saves.SramSaveRepository
@@ -45,6 +46,8 @@ enum class LibrarySort(val label: String) {
 data class HomeUiState(
     val allGames: List<RomRecord> = emptyList(),
     val filteredGames: List<RomRecord> = emptyList(),
+    val recentGames: List<RomRecord> = emptyList(),
+    val favoriteGames: List<RomRecord> = emptyList(),
     val savedFolders: List<SavedFolderRecord> = emptyList(),
     val preferences: EmulatorPreferences = EmulatorPreferences(),
     val searchQuery: String = "",
@@ -52,6 +55,7 @@ data class HomeUiState(
     val sort: LibrarySort = LibrarySort.RECENT,
     val isLoadingRom: Boolean = false,
     val isScanningFolders: Boolean = false,
+    val hasStorageAccess: Boolean = false,
     val statusBanner: String? = null,
     val errorBanner: String? = null,
     val relinkNeededForRom: RomRecord? = null,
@@ -59,6 +63,7 @@ data class HomeUiState(
 
 class HomeViewModel(
     private val libraryRepository: LibraryRepository,
+    private val deviceStorageScanner: DeviceStorageScanner,
     private val romStagingRepository: RomStagingRepository,
     private val sramSaveRepository: SramSaveRepository,
     private val preferencesRepository: PreferencesRepository,
@@ -70,6 +75,7 @@ class HomeViewModel(
     private val sort = MutableStateFlow(LibrarySort.RECENT)
     private val loadingRom = MutableStateFlow(false)
     private val scanningFolders = MutableStateFlow(false)
+    private val storageAccess = MutableStateFlow(false)
     private val statusBanner = MutableStateFlow<String?>(null)
     private val errorBanner = MutableStateFlow<String?>(null)
     private val relinkNeeded = MutableStateFlow<RomRecord?>(null)
@@ -82,9 +88,22 @@ class HomeViewModel(
         val sort: LibrarySort,
     )
 
+    private data class BusyFlags(
+        val loading: Boolean,
+        val scanning: Boolean,
+        val storageAccess: Boolean,
+    )
+
+    private data class BannerState(
+        val status: String?,
+        val error: String?,
+        val relink: RomRecord?,
+    )
+
     private data class BusyAndBanners(
         val loading: Boolean,
         val scanning: Boolean,
+        val storageAccess: Boolean,
         val status: String?,
         val error: String?,
         val relink: RomRecord?,
@@ -95,8 +114,22 @@ class HomeViewModel(
         libraryRepository.savedFoldersFlow,
         preferencesRepository.preferencesFlow,
         combine(searchQuery, filter, sort) { q, f, s -> QueryControls(q, f, s) },
-        combine(loadingRom, scanningFolders, statusBanner, errorBanner, relinkNeeded) { l, sc, st, err, rel ->
-            BusyAndBanners(l, sc, st, err, rel)
+        combine(
+            combine(loadingRom, scanningFolders, storageAccess) { l, sc, access ->
+                BusyFlags(l, sc, access)
+            },
+            combine(statusBanner, errorBanner, relinkNeeded) { st, err, rel ->
+                BannerState(st, err, rel)
+            },
+        ) { flags, banners ->
+            BusyAndBanners(
+                loading = flags.loading,
+                scanning = flags.scanning,
+                storageAccess = flags.storageAccess,
+                status = banners.status,
+                error = banners.error,
+                relink = banners.relink,
+            )
         },
     ) { games, folders, prefs, controls, busy ->
         val trimmedQuery = controls.query.trim().lowercase()
@@ -133,6 +166,8 @@ class HomeViewModel(
         HomeUiState(
             allGames = games,
             filteredGames = filtered,
+            recentGames = LibraryShelves.recents(games),
+            favoriteGames = LibraryShelves.favorites(games),
             savedFolders = folders,
             preferences = prefs,
             searchQuery = controls.query,
@@ -140,6 +175,7 @@ class HomeViewModel(
             sort = controls.sort,
             isLoadingRom = busy.loading,
             isScanningFolders = busy.scanning,
+            hasStorageAccess = busy.storageAccess,
             statusBanner = busy.status,
             errorBanner = busy.error,
             relinkNeededForRom = busy.relink,
@@ -177,7 +213,9 @@ class HomeViewModel(
                     is AppResult.Success -> {
                         val r = res.value
                         val warnText = if (r.warnings.isNotEmpty()) " (${r.warnings.first()})" else ""
-                        statusBanner.value = "Indexed ${r.discoveredGames} game(s) from folder.$warnText"
+                        statusBanner.value =
+                            "Folder scan: ${r.discoveredGames} unique ROM(s), " +
+                                "${r.newGames} new, ${r.duplicateGames} duplicate copies ignored.$warnText"
                     }
                 }
             } finally {
@@ -196,14 +234,84 @@ class HomeViewModel(
             }
             scanningFolders.value = true
             errorBanner.value = null
-            statusBanner.value = "Rescanning ${folders.size} game folder(s)..."
+            statusBanner.value = "Quick scanning ${folders.size} granted folder(s) for supported ROMs..."
             try {
                 val reports = libraryRepository.scanAllSavedFolders()
                 val totalFound = reports.sumOf { it.discoveredGames }
+                val totalNew = reports.sumOf { it.newGames }
+                val totalDuplicates = reports.sumOf { it.duplicateGames }
                 val firstWarning = reports.flatMap { it.warnings }.firstOrNull()
                 statusBanner.value = buildString {
-                    append("Rescan complete: $totalFound ROM(s) verified.")
+                    append(
+                        "Folder rescan: $totalFound unique ROM(s), $totalNew new, " +
+                            "$totalDuplicates duplicate copies ignored.",
+                    )
                     if (firstWarning != null) append(" Warning: $firstWarning")
+                }
+            } finally {
+                scanningFolders.value = false
+            }
+        }
+    }
+
+    /**
+     * SAF-only folder scan entry point. Returns false when no SAF folder is configured so the
+     * Activity can open the folder picker. Device-wide scanning is a separate opt-in action.
+     */
+    fun quickScan(): Boolean {
+        if (uiState.value.savedFolders.isEmpty()) {
+            errorBanner.value = null
+            statusBanner.value =
+                "Choose a folder first for the SAF-only scan, or use Scan device with storage access."
+            return false
+        }
+        rescanSavedFolders()
+        return true
+    }
+
+    /** Kept in sync by MainActivity when the permission dialog or Settings screen closes. */
+    fun refreshStorageAccess(granted: Boolean, notifyIfDenied: Boolean = false) {
+        if (storageAccess.value == granted) return
+        storageAccess.value = granted
+        if (!granted) {
+            viewModelScope.launch {
+                libraryRepository.markDeviceSourcesUnavailable()
+                if (notifyIfDenied) {
+                    errorBanner.value =
+                        "Device storage access is off. Previously discovered file-backed games need access restored or a SAF relink; your saves are safe."
+                }
+            }
+        }
+    }
+
+    fun reportStorageAccessDenied() {
+        errorBanner.value =
+            "Storage access was not granted. You can still use Select folder or Import a single ROM file."
+    }
+
+    fun scanDeviceStorage() {
+        scanJob?.cancel()
+        scanJob = viewModelScope.launch {
+            scanningFolders.value = true
+            errorBanner.value = null
+            statusBanner.value = "Scanning device storage for .gba / .gbc / .gb ROMs..."
+            try {
+                when (val res = deviceStorageScanner.scanDevice()) {
+                    is AppResult.Failure -> {
+                        errorBanner.value = res.error.userMessage
+                        statusBanner.value = null
+                    }
+                    is AppResult.Success -> {
+                        val r = res.value
+                        val warning = r.warnings.firstOrNull()?.let { " Warning: $it" }.orEmpty()
+                        statusBanner.value = buildString {
+                            append(
+                                "Device scan: ${r.discoveredGames} unique ROM(s), " +
+                                    "${r.newGames} new, ${r.duplicateGames} duplicate copies ignored, ",
+                            )
+                            append("${r.inspectedFiles} checked, ${r.skippedFiles} skipped.$warning")
+                        }
+                    }
                 }
             } finally {
                 scanningFolders.value = false
@@ -214,7 +322,7 @@ class HomeViewModel(
     fun cancelScan() {
         scanJob?.cancel()
         scanningFolders.value = false
-        statusBanner.value = "Folder scan cancelled."
+        statusBanner.value = "Scan cancelled."
     }
 
     fun removeSavedFolder(treeUri: String) {
@@ -324,6 +432,22 @@ class HomeViewModel(
         }
     }
 
+    fun removeFromRecents(record: RomRecord) {
+        viewModelScope.launch {
+            libraryRepository.clearRecentHistory(record.romId)
+            statusBanner.value =
+                "Removed '${record.effectiveTitle}' from Recently Played. The game and its saves are unchanged."
+        }
+    }
+
+    fun removeFromFavorites(record: RomRecord) {
+        viewModelScope.launch {
+            libraryRepository.setFavorite(record.romId, false)
+            statusBanner.value =
+                "Removed '${record.effectiveTitle}' from Favorites. The game remains in your library."
+        }
+    }
+
     fun renameGame(record: RomRecord, newTitle: String) {
         viewModelScope.launch {
             libraryRepository.setCustomTitle(record.romId, newTitle)
@@ -397,6 +521,7 @@ class HomeViewModel(
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             HomeViewModel(
                 libraryRepository = container.libraryRepository,
+                deviceStorageScanner = container.deviceStorageScanner,
                 romStagingRepository = container.romStagingRepository,
                 sramSaveRepository = container.sramSaveRepository,
                 preferencesRepository = container.preferencesRepository,

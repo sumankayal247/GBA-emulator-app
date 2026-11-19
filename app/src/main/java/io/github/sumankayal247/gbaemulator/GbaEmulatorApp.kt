@@ -7,6 +7,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import io.github.sumankayal247.gbaemulator.data.db.GbaLibraryDatabase
 import io.github.sumankayal247.gbaemulator.data.firmware.BiosRepository
 import io.github.sumankayal247.gbaemulator.data.preferences.PreferencesRepository
+import io.github.sumankayal247.gbaemulator.data.rom.DeviceStorageScanner
 import io.github.sumankayal247.gbaemulator.data.rom.LibraryRepository
 import io.github.sumankayal247.gbaemulator.data.rom.RomStagingRepository
 import io.github.sumankayal247.gbaemulator.data.saves.SaveStateRepository
@@ -34,6 +35,7 @@ class AppContainer(application: Application) {
         saveStateRepository = saveStateRepository,
         preferencesRepository = preferencesRepository,
     )
+    val deviceStorageScanner = DeviceStorageScanner(application, libraryRepository)
     val emulatorSession = EmulatorSession(
         context = application,
         sramSaveRepository = sramSaveRepository,

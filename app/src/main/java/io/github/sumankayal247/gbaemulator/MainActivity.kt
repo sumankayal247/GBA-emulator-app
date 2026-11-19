@@ -1,5 +1,6 @@
 package io.github.sumankayal247.gbaemulator
 
+import android.Manifest
 import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.view.KeyEvent
@@ -36,6 +37,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.sumankayal247.gbaemulator.data.rom.StorageAccess
 import io.github.sumankayal247.gbaemulator.domain.model.AppResult
 import io.github.sumankayal247.gbaemulator.domain.model.BiosType
 import io.github.sumankayal247.gbaemulator.domain.model.OrientationLock
@@ -76,6 +78,7 @@ class MainActivity : ComponentActivity() {
         get() = (application as GbaEmulatorApp).container
 
     private var activeGameplayVm: GameplayViewModel? = null
+    private var activeHomeVm: HomeViewModel? = null
     private var currentDestination: AppDestination = AppDestination.SHELL
     private var currentTab: MainTab = MainTab.HOME
 
@@ -93,6 +96,7 @@ class MainActivity : ComponentActivity() {
                     factory = GameplayViewModel.Factory(appContainer),
                 )
                 activeGameplayVm = gameplayViewModel
+                activeHomeVm = homeViewModel
 
                 val homeState by homeViewModel.uiState.collectAsStateWithLifecycle()
                 val gameplayState by gameplayViewModel.uiState.collectAsStateWithLifecycle()
@@ -123,6 +127,25 @@ class MainActivity : ComponentActivity() {
                     if (treeUri != null) {
                         homeViewModel.addAndScanFolder(treeUri)
                     }
+                }
+
+                // ADR-0006: API 26-29 runtime prompt; API 30+ all-files access in Settings.
+                val requestLegacyStorageLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission(),
+                ) { granted ->
+                    homeViewModel.refreshStorageAccess(granted, notifyIfDenied = true)
+                    if (granted) homeViewModel.scanDeviceStorage() else homeViewModel.reportStorageAccessDenied()
+                }
+                val allFilesSettingsLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult(),
+                ) {
+                    val granted = StorageAccess.hasAccess(this@MainActivity)
+                    homeViewModel.refreshStorageAccess(granted, notifyIfDenied = true)
+                    if (granted) homeViewModel.scanDeviceStorage() else homeViewModel.reportStorageAccessDenied()
+                }
+
+                LaunchedEffect(Unit) {
+                    homeViewModel.refreshStorageAccess(StorageAccess.hasAccess(this@MainActivity))
                 }
 
                 // SAF: Import and launch a single ROM file
@@ -304,7 +327,22 @@ class MainActivity : ComponentActivity() {
                                     state = homeState,
                                     onPickFolder = { pickFolderLauncher.launch(null) },
                                     onImportSingleRom = { openRomLauncher.launch(arrayOf("*/*")) },
-                                    onRescanFolders = homeViewModel::rescanSavedFolders,
+                                    onQuickScan = {
+                                        if (!homeViewModel.quickScan()) {
+                                            // No SAF folders yet: let the user grant one, then scan it.
+                                            pickFolderLauncher.launch(null)
+                                        }
+                                    },
+                                    onScanDevice = homeViewModel::scanDeviceStorage,
+                                    onRequestStorageAccess = {
+                                        if (StorageAccess.usesRuntimeDialog()) {
+                                            requestLegacyStorageLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+                                        } else {
+                                            allFilesSettingsLauncher.launch(
+                                                StorageAccess.allFilesAccessIntent(this@MainActivity),
+                                            )
+                                        }
+                                    },
                                     onCancelScan = homeViewModel::cancelScan,
                                     onSearchChange = homeViewModel::updateSearchQuery,
                                     onFilterChange = homeViewModel::selectFilter,
@@ -319,6 +357,8 @@ class MainActivity : ComponentActivity() {
                                         relinkRomLauncher.launch(arrayOf("*/*"))
                                     },
                                     onToggleFavorite = homeViewModel::toggleFavorite,
+                                    onRemoveFromRecents = homeViewModel::removeFromRecents,
+                                    onRemoveFromFavorites = homeViewModel::removeFromFavorites,
                                     onRenameGame = homeViewModel::renameGame,
                                     onPickCoverImage = { record ->
                                         pendingCoverRecord = record
@@ -468,6 +508,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        activeHomeVm?.refreshStorageAccess(StorageAccess.hasAccess(this))
         appContainer.controllerManager.refreshDevices()
         if (currentDestination == AppDestination.GAMEPLAY) {
             activeGameplayVm?.onActivityResumed()

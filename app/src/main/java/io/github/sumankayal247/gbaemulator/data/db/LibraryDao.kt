@@ -34,6 +34,9 @@ interface LibraryDao {
     @Query("UPDATE games SET last_played_ms = :epochMs WHERE rom_id = :romId")
     suspend fun updateLastPlayed(romId: String, epochMs: Long)
 
+    @Query("UPDATE games SET last_played_ms = 0 WHERE rom_id = :romId")
+    suspend fun clearLastPlayed(romId: String)
+
     @Query("UPDATE games SET total_play_time_ms = total_play_time_ms + :deltaMs WHERE rom_id = :romId")
     suspend fun addPlayTime(romId: String, deltaMs: Long)
 
@@ -59,6 +62,9 @@ interface LibraryDao {
     @Query("SELECT * FROM rom_sources WHERE rom_id = :romId ORDER BY is_available DESC, last_seen_ms DESC")
     suspend fun getSourcesForRom(romId: String): List<RomSourceEntity>
 
+    @Query("SELECT * FROM rom_sources WHERE source_uri = :sourceUri LIMIT 1")
+    suspend fun getSource(sourceUri: String): RomSourceEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSource(source: RomSourceEntity)
 
@@ -67,6 +73,9 @@ interface LibraryDao {
 
     @Query("UPDATE rom_sources SET is_available = 0 WHERE tree_uri = :treeUri AND last_seen_ms < :scanStartedMs")
     suspend fun markStaleSourcesUnavailableInTree(treeUri: String, scanStartedMs: Long)
+
+    @Query("UPDATE rom_sources SET is_available = 0 WHERE source_uri LIKE 'file:%'")
+    suspend fun markFileSourcesUnavailable()
 
     @Query("DELETE FROM rom_sources WHERE tree_uri = :treeUri")
     suspend fun deleteSourcesForTree(treeUri: String)

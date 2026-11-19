@@ -8,14 +8,15 @@ This Privacy Policy accurately describes the actual data flows of the **GBA Emul
 
 - **No network access:** The application does **not** declare Android's `INTERNET` or `ACCESS_NETWORK_STATE` permissions and makes zero outbound network connections.
 - **No accounts, analytics, ads, or crash-upload SDKs:** The application contains no analytics SDKs, advertising SDKs, tracking libraries, or remote crash-reporting services.
-- **On-device storage only:** All game indexes, battery saves (SRAM), save states, screenshots, cheat entries, controller mappings, layout profiles, and optional BIOS files remain strictly inside your device's local storage.
+- **On-device storage only:** All game indexes, battery saves (SRAM), save states, screenshots, cheat entries, controller mappings, layout profiles, and optional BIOS files remain strictly inside your device's local storage. Nothing is uploaded.
+- **Optional storage access:** The device-wide **Scan device** action asks for storage read access. On Android 9 and below this is the standard `READ_EXTERNAL_STORAGE` dialog; on Android 10 and above it is Android's **All files access** setting (`MANAGE_EXTERNAL_STORAGE`). You can decline and keep using SAF folders and single-file import; the app never scans device storage without that access.
 
 ## 2. Files and Permissions
 
-- The application uses Android's **Storage Access Framework (SAF)** (`OpenDocument`, `OpenDocumentTree`, and `CreateDocument`).
-- It requests **no broad storage permissions** (`READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, or `MANAGE_EXTERNAL_STORAGE`).
-- It can access **only** the individual ROM files, folders, cover images, save backups, or optional BIOS files that you explicitly choose through the Android system picker.
-- You can revoke folder access at any time by removing a folder in the **Settings** tab or through Android system settings.
+- The application uses Android's **Storage Access Framework (SAF)** (`OpenDocument`, `OpenDocumentTree`, and `CreateDocument`) for all file picking, saving, and backup operations.
+- **Optional device scan:** If you tap **Scan device**, the app asks for `READ_EXTERNAL_STORAGE` (Android 9 and below) or asks you to enable **All files access** (`MANAGE_EXTERNAL_STORAGE`, Android 10 and above) in system Settings. This is used **only** to look for `.gba`, `.gbc`, and `.gb` files and read their headers/checksums so they can be added to the local library. The app does not request `INTERNET`, `WRITE_EXTERNAL_STORAGE`, or any media-location permission, and never modifies or deletes files found on shared storage.
+- If you decline or later revoke storage access, the app still works through SAF: choose a ROM folder or a single ROM file with the system picker. Previously discovered file-backed entries are marked unavailable until access is restored or you relink them; their saves stay intact.
+- You can revoke folder access at any time by removing a folder in the **Settings** tab, and revoke All files access in Android system Settings.
 
 ## 3. Data Stored Locally on Your Device
 

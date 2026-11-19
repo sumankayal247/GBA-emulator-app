@@ -5,6 +5,7 @@ import io.github.sumankayal247.gbaemulator.domain.model.EmulatorError
 import io.github.sumankayal247.gbaemulator.domain.model.GameSystem
 import io.github.sumankayal247.gbaemulator.domain.model.RomRecord
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -17,6 +18,15 @@ data class ValidatedRomStream(
     val displayTitle: String,
     val fileSizeBytes: Long,
     val stagedFile: File,
+)
+
+/** Metadata computed from a ROM file without copying it into app-private staging (ADR-0006). */
+data class RomInspection(
+    val romId: String,
+    val sha256: String,
+    val system: GameSystem,
+    val displayTitle: String,
+    val fileSizeBytes: Long,
 )
 
 /**
@@ -118,6 +128,80 @@ object RomIngestionValidator {
         val cgbFlag = header[0x143].toInt() and 0xFF
         val isCgb = (extensionSystem == GameSystem.GBC) || (cgbFlag == 0x80 || cgbFlag == 0xC0)
         return AppResult.Success(if (isCgb) GameSystem.GBC else GameSystem.GB)
+    }
+
+    /**
+     * Reads extension, size, header magic, and SHA-256 from an existing filesystem ROM without
+     * staging a copy. Used by the optional device-wide scan (ADR-0006).
+     */
+    fun inspectFile(file: File): AppResult<RomInspection> {
+        val extensionResult = validateExtension(file.name)
+        if (extensionResult is AppResult.Failure) return extensionResult
+        val extensionSystem = (extensionResult as AppResult.Success).value
+
+        if (!file.isFile) {
+            return AppResult.Failure(
+                EmulatorError.MissingSourceFile(
+                    romId = "",
+                    message = "ROM path is no longer a readable file.",
+                ),
+            )
+        }
+
+        val headerBuf = ByteArray(HEADER_CAPTURE_BYTES)
+        var headerFilled = 0
+        var totalBytes = 0L
+        val digest = MessageDigest.getInstance("SHA-256")
+        val chunk = ByteArray(CHUNK_SIZE_BYTES)
+
+        try {
+            FileInputStream(file).use { input ->
+                while (true) {
+                    val read = input.read(chunk)
+                    if (read <= 0) break
+                    totalBytes += read
+                    if (totalBytes > extensionSystem.maxSizeBytes) {
+                        return AppResult.Failure(
+                            EmulatorError.CorruptOrTruncatedRom(
+                                "${extensionSystem.shortLabel} ROM exceeds the ${extensionSystem.maxSizeBytes / (1024 * 1024)} MiB size limit.",
+                            ),
+                        )
+                    }
+                    if (headerFilled < headerBuf.size) {
+                        val copyLen = minOf(read, headerBuf.size - headerFilled)
+                        System.arraycopy(chunk, 0, headerBuf, headerFilled, copyLen)
+                        headerFilled += copyLen
+                    }
+                    digest.update(chunk, 0, read)
+                }
+            }
+        } catch (_: SecurityException) {
+            return AppResult.Failure(
+                EmulatorError.MissingSourceFile(
+                    romId = "",
+                    message = "Storage permission was revoked for this ROM path.",
+                ),
+            )
+        } catch (_: IOException) {
+            return AppResult.Failure(
+                EmulatorError.SaveStorageFailure("Could not read a ROM file found during the device scan."),
+            )
+        }
+
+        val headerResult = validateHeader(headerBuf, headerFilled, totalBytes, extensionSystem)
+        if (headerResult is AppResult.Failure) return headerResult
+        val system = (headerResult as AppResult.Success).value
+        val shaHex = digest.digest().joinToString("") { "%02x".format(it) }
+
+        return AppResult.Success(
+            RomInspection(
+                romId = RomRecord.buildRomId(system, shaHex),
+                sha256 = shaHex,
+                system = system,
+                displayTitle = deriveDisplayTitle(file.name),
+                fileSizeBytes = totalBytes,
+            ),
+        )
     }
 
     /**

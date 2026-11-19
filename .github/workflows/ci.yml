@@ -148,8 +148,18 @@ jobs:
             fi
             PERMS=$("$AAPT2" dump permissions "$APK")
             echo "$PERMS"
-            if echo "$PERMS" | grep -E "INTERNET|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE"; then
-              echo "ERROR: Prohibited broad storage or network permission detected in $APK"
+            # ADR-0006: only the two explicitly documented read permissions are allowed.
+            # INTERNET and any write permission remain prohibited.
+            if echo "$PERMS" | grep -E "android\.permission\.(INTERNET|WRITE_EXTERNAL_STORAGE|READ_MEDIA_[A-Z_]+|ACCESS_[A-Z_]+)"; then
+              echo "ERROR: Unexpected network/write permission detected in $APK"
+              exit 1
+            fi
+            if ! echo "$PERMS" | grep -q "android.permission.MANAGE_EXTERNAL_STORAGE"; then
+              echo "ERROR: Missing expected ADR-0006 All files access permission in $APK"
+              exit 1
+            fi
+            if ! echo "$PERMS" | grep -q "android.permission.READ_EXTERNAL_STORAGE"; then
+              echo "ERROR: Missing expected legacy read permission in $APK"
               exit 1
             fi
           done

@@ -28,7 +28,7 @@ The supplied screenshots are the visual and feature references. They suggest fiv
 
 - GBA, GBC, and original GB game loading.
 - Local game library with system grouping, recent games, favourites, search, and last-played metadata.
-- Android Storage Access Framework (SAF) file/folder selection; do not request broad storage access.
+- Android Storage Access Framework (SAF) file/folder selection, plus **optional** user-granted storage read for device-wide ROM discovery (ADR-0006); never request write or network access.
 - Portrait and landscape gameplay layouts inspired by the supplied screenshots.
 - Virtual D-pad, A/B, L/R, Start, Select, and an in-game Menu button.
 - Multi-touch so movement and action buttons can be held simultaneously.
@@ -155,10 +155,10 @@ docs/
 
 Reference: [08 — Library home](reference-images/08-library-home.jpg)
 
-- Header: app name, selected game directory, choose-directory action, and refresh/rescan action.
+- Header: app name, selected game directory, explicitly labelled folder/file actions, and a radar **Scan device** action that requests optional storage read access (ADR-0006), with **Scan selected folders only** as the SAF fallback.
 - Group cards or rows by **Game Boy Advance**, **Game Boy Color**, and **Game Boy**.
 - Game item: title, system label, optional local cover image, last played, and favourite state.
-- Provide search, sort, favourites, and a Recently Played area.
+- Provide search, sort, favourites, and two bounded horizontal shelves: **Recently Played** (remove action clears only `last_played_ms`) and **Favorites** (remove action clears only `is_favorite`). Neither removes the game record, ROM file, SRAM, or save states.
 - If artwork is unavailable, use a neutral system-specific placeholder. Do not fetch or redistribute copyrighted artwork automatically.
 - Empty state: explain how to choose a ROM folder or select individual files.
 - Unsupported extensions should be ignored with a clear import message, not crash the scan.
@@ -319,7 +319,7 @@ Preferences DataStore:
 | **P4 — Handheld UX** | Portrait/landscape skins, layout presets, in-game menu | **IN PROGRESS** — portrait/landscape virtual handheld, multi-touch tracker, immersive bars, and core in-game pause menu implemented; layout editor & presets scheduled for P4 PR |
 | **P5 — Save states and extras** | Eight save slots, load flow, cheats, dynamic core options | **NOT STARTED** — native serialize/unserialize, `CoreOptionsStore`, and `CheatValidator` implemented & host-tested; Android UI scheduled for P5 PR |
 | **P6 — External controllers** | Bluetooth/USB discovery, mapping, hot-plug, test screen | **NOT STARTED** — controller mapping works; disconnects release held inputs; touch controls still work |
-| **P7 — Release hardening** | QA, accessibility, performance, privacy, signed release build | **NOT STARTED** — no known data-loss/crash blocker; no broad storage permission; third-party notices included |
+| **P7 — Release hardening** | QA, accessibility, performance, privacy, signed release build | **NOT STARTED** — no known data-loss/crash blocker; optional read-only storage access per ADR-0006 needs Play declaration review; third-party notices included |
 
 ### Recommended build order
 
@@ -350,7 +350,7 @@ This order reduces the main project risk: a beautiful shell without a stable emu
 - [ ] Cheats and core options shown in the UI are actually supported by the pinned core.
 - [ ] No ROMs or proprietary BIOS are bundled.
 - [ ] Open-source notices and required MPL source availability are included.
-- [ ] No broad storage permission, forced login, or network dependency.
+- [ ] No write/network permission, forced login, or network dependency; optional read-only storage access disclosed and Play declaration approved (ADR-0006).
 
 ## 9. Risks and decisions to resolve before coding
 
@@ -437,7 +437,7 @@ The following requirements are release blockers, not optional polish.
 
 ### 11.5 Security, privacy, and distribution
 
-- Request no broad storage permission. Request only the SAF access needed for selected files/folders.
+- Prefer SAF access for selected files/folders. A device-wide scan may request read-only storage access only after explicit user opt-in (ADR-0006); never request write access or treat broad access as automatic.
 - No account, analytics, ads, or network access is required for core gameplay. If analytics/crash reporting is ever proposed, document data collected, obtain appropriate consent, and make it opt-in where required.
 - Add a privacy policy that accurately describes the app's actual data flows before store publication. Do not claim "no data collected" until SDKs, crash reporting, and network traffic have been audited.
 - Keep signing keys, upload keys, API keys, and secrets out of Git. Use GitHub Actions secrets or a local secure signing process.
@@ -554,13 +554,13 @@ Use only these status values:
 | Android app foundation and CI | IN PROGRESS | Gradle 8.13 / AGP 8.10.1 / Kotlin 2.1.20 / KSP / Room 2.7.1 / Compose + NDK project & CI workflow (unit tests, unsuppressed Lint, Debug & R8 Release APKs) passing; awaiting hardware install & upgrade test |
 | Native emulator lifecycle/JNI | IN PROGRESS | Single-owner worker thread, 7-state FSM, bounded shutdown, screenshot capture, core-option JSON/overrides, and JNI bridge implemented + 9/9 host & ASan tests passing; real-device lifecycle tests pending |
 | Video/audio pipeline | IN PROGRESS | EGL/GLES3 `SurfaceView` renderer + NDK AAudio SPSC resampled pipeline implemented; real-device benchmarks & `docs/PERFORMANCE_BUDGET.md` pending |
-| SAF import and library | IN PROGRESS | Room v1 schema (`games`, `rom_sources`, `saved_folders`, `cheats`, `core_option_overrides`), cancellable SAF `OpenDocumentTree` scanner, single-file import, SHA-256 identity, relink, custom covers, search/filter/sort, and unit tests implemented; real-device OEM SAF provider tests pending |
+| SAF import and library | IN PROGRESS | Room v1 schema (`games`, `rom_sources`, `saved_folders`, `cheats`, `core_option_overrides`), cancellable SAF `OpenDocumentTree` scanner, single-file import, SHA-256 identity, relink, custom covers, search/filter/sort, labelled folder/file actions with SAF "Use this folder" hint, radar device scan + SAF folder fallback with per-scan SHA-256 deduplication and unique/new/duplicate reporting, removable Recently Played/Favorites shelves, and unit tests implemented; real-device OEM SAF/permission-provider tests pending |
 | SRAM persistence and recovery | IN PROGRESS | Atomic temp+fsync+rename writes, `.bak` corruption recovery, and SAF export/import implemented + unit & native round-trip tests; real-device force-stop test pending |
 | Touch controls and responsive layouts | IN PROGRESS | Portrait & landscape virtual handhelds, multi-pointer `TouchInputTracker`, layout editor, and proposed global shell tint / shared scaled preview changes; build, real-device multi-touch, preview/rotation and owner review pending |
 | Save-state slots | IN PROGRESS | Per-ROM isolated 8-slot save states with captured PNG thumbnails, SHA-256 checksums, `.bak` quarantine/recovery, overwrite confirmation, and native + JVM unit tests implemented; real-device round-trip verification pending |
 | Cheats and core options | IN PROGRESS | Dynamic core-options query/UI (global + per-ROM, zero unsupported/hardcoded toggles), validated per-ROM Libretro cheats, optional user BIOS import (`BiosRepository`), and native + JVM unit tests implemented; real-device verification pending |
 | Bluetooth/USB controllers | IN PROGRESS | `ControllerManager`, `GamepadInputTracker`, automatic device discovery, per-device remapping & deadzone persistence, live input tester, hot-plug disconnect input release, auto-hide touch controls, and JVM unit tests implemented; physical BT/USB controller matrix testing pending |
-| Security, privacy, licence and release compliance | IN PROGRESS | `THIRD_PARTY_NOTICES.md`, `PRIVACY_POLICY.md`, `docs/RELEASE_SIGNING.md`, in-app notices, zero `INTERNET`/broad-storage permissions, and R8 unsigned Release APK CI verification completed; signed release artifact & hardware audit pending |
+| Security, privacy, licence and release compliance | IN PROGRESS | `THIRD_PARTY_NOTICES.md`, `PRIVACY_POLICY.md`, `docs/RELEASE_SIGNING.md`, in-app notices, no `INTERNET`/write permission, optional read-only access per ADR-0006, and R8 unsigned Release APK CI verification completed; Play All-files-access declaration, signed artifact & hardware audit pending |
 
 **Completion rule:** only the project owner may approve a status change to DONE after reviewing the linked evidence/PR. Agents may propose a status update in a PR, but must not self-certify completion. Keep this table current in every feature PR.
 
