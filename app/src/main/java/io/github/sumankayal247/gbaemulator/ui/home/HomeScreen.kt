@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,7 +35,6 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Star
@@ -65,15 +65,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.cos
+import kotlin.math.sin
 import io.github.sumankayal247.gbaemulator.domain.model.GameSystem
 import io.github.sumankayal247.gbaemulator.domain.model.RomRecord
 import io.github.sumankayal247.gbaemulator.ui.theme.EmulatorColors
@@ -89,7 +97,7 @@ fun HomeScreen(
     state: HomeUiState,
     onPickFolder: () -> Unit,
     onImportSingleRom: () -> Unit,
-    onRescanFolders: () -> Unit,
+    onQuickScan: () -> Unit,
     onCancelScan: () -> Unit,
     onSearchChange: (String) -> Unit,
     onFilterChange: (LibraryFilter) -> Unit,
@@ -97,6 +105,8 @@ fun HomeScreen(
     onLaunchGame: (RomRecord) -> Unit,
     onRelinkGame: (RomRecord) -> Unit,
     onToggleFavorite: (RomRecord) -> Unit,
+    onRemoveFromRecents: (RomRecord) -> Unit,
+    onRemoveFromFavorites: (RomRecord) -> Unit,
     onRenameGame: (RomRecord, String) -> Unit,
     onPickCoverImage: (RomRecord) -> Unit,
     onExportSram: (RomRecord) -> Unit,
@@ -153,7 +163,8 @@ fun HomeScreen(
 
         Spacer(Modifier.height(12.dp))
 
-        // Game Directory Bar matching 08-library-home.jpg (Folder picker + Import file + Rescan)
+        // Folder selection uses ACTION_OPEN_DOCUMENT_TREE (never a file picker), and the
+        // two actions are labelled so a folder cannot be confused with a single ROM file.
         Surface(
             color = EmulatorColors.CardSurface,
             shape = RoundedCornerShape(14.dp),
@@ -161,77 +172,123 @@ fun HomeScreen(
                 .fillMaxWidth()
                 .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(14.dp)),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(EmulatorColors.AccentBlue.copy(alpha = 0.16f))
-                        .clickable(onClick = onPickFolder),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Folder,
-                        contentDescription = "Choose game folder",
-                        tint = EmulatorColors.AccentBlue,
-                    )
-                }
-
-                Spacer(Modifier.width(12.dp))
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(onClick = onPickFolder),
-                ) {
-                    Text(
-                        text = "Game directory",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = EmulatorColors.TextPrimary,
-                    )
-                    val folderSummary = when (state.savedFolders.size) {
-                        0 -> "Tap to select a ROM folder"
-                        1 -> ".../${state.savedFolders.first().displayName}"
-                        else -> "${state.savedFolders.size} folders configured"
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(EmulatorColors.AccentBlue.copy(alpha = 0.16f))
+                            .clickable(onClick = onPickFolder),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Folder,
+                            contentDescription = "Choose ROM folder",
+                            tint = EmulatorColors.AccentBlue,
+                        )
                     }
-                    Text(
-                        text = folderSummary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = EmulatorColors.AccentCyan,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+
+                    Spacer(Modifier.width(12.dp))
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(onClick = onPickFolder),
+                    ) {
+                        Text(
+                            text = "Game folder",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = EmulatorColors.TextPrimary,
+                        )
+                        val folderSummary = when (state.savedFolders.size) {
+                            0 -> "No folder selected yet"
+                            1 -> ".../${state.savedFolders.first().displayName}"
+                            else -> "${state.savedFolders.size} folders configured"
+                        }
+                        Text(
+                            text = folderSummary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = EmulatorColors.AccentCyan,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
 
-                IconButton(onClick = onImportSingleRom) {
+                Spacer(Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onPickFolder,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EmulatorColors.AccentBlue.copy(alpha = 0.22f),
+                            contentColor = EmulatorColors.AccentCyan,
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Select folder", style = MaterialTheme.typography.labelMedium)
+                    }
+
+                    Button(
+                        onClick = if (state.isScanningFolders) onCancelScan else onQuickScan,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EmulatorColors.AccentBlue.copy(alpha = 0.22f),
+                            contentColor = EmulatorColors.AccentCyan,
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                    ) {
+                        if (state.isScanningFolders) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = EmulatorColors.AccentCyan,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Cancel scan", style = MaterialTheme.typography.labelMedium)
+                        } else {
+                            RadarLogo(
+                                tint = EmulatorColors.AccentCyan,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Quick scan", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = onImportSingleRom,
+                    modifier = Modifier.height(32.dp),
+                ) {
                     Icon(
                         imageVector = Icons.Filled.FolderOpen,
-                        contentDescription = "Open single ROM file",
-                        tint = EmulatorColors.TextPrimary,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
                     )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Import a single ROM file instead", color = EmulatorColors.TextSecondary)
                 }
 
-                if (state.isScanningFolders) {
-                    IconButton(onClick = onCancelScan) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = EmulatorColors.AccentCyan,
-                        )
-                    }
-                } else {
-                    IconButton(onClick = onRescanFolders) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Rescan game folders",
-                            tint = EmulatorColors.TextPrimary,
-                        )
-                    }
+                if (state.savedFolders.isEmpty()) {
+                    Text(
+                        text = "In the system folder picker, open Internal storage and tap “Use this folder” to confirm.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = EmulatorColors.TextMuted,
+                    )
                 }
             }
         }
@@ -372,6 +429,38 @@ fun HomeScreen(
                     .fillMaxWidth()
                     .weight(1f),
             ) {
+                if (!showingSingleList && state.recentGames.isNotEmpty()) {
+                    item(key = "shelf_recently_played") {
+                        HorizontalGameShelf(
+                            title = "Recently Played",
+                            caption = if (state.recentGames.size > LibraryShelves.MAX_ITEMS) {
+                                "Your ${LibraryShelves.MAX_ITEMS} most recent games"
+                            } else {
+                                "Pick up where you left off"
+                            },
+                            games = state.recentGames,
+                            onPlay = onLaunchGame,
+                            onRemove = onRemoveFromRecents,
+                            removeLabel = "Remove from Recently Played",
+                            showLastPlayed = true,
+                        )
+                    }
+                }
+
+                if (!showingSingleList && state.favoriteGames.isNotEmpty()) {
+                    item(key = "shelf_favorites") {
+                        HorizontalGameShelf(
+                            title = "Favorites",
+                            caption = "Starred games — remove with the × button",
+                            games = state.favoriteGames,
+                            onPlay = onLaunchGame,
+                            onRemove = onRemoveFromFavorites,
+                            removeLabel = "Remove from Favorites",
+                            showLastPlayed = false,
+                        )
+                    }
+                }
+
                 if (showingSingleList) {
                     val itemsToShow = seeAllSystem?.let { sys ->
                         state.filteredGames.filter { it.system == sys }
@@ -536,6 +625,214 @@ fun HomeScreen(
                 }
             },
         )
+    }
+}
+
+/** A compact, horizontally scrolling shelf for recently played or favourite games. */
+@Composable
+private fun HorizontalGameShelf(
+    title: String,
+    caption: String,
+    games: List<RomRecord>,
+    onPlay: (RomRecord) -> Unit,
+    onRemove: (RomRecord) -> Unit,
+    removeLabel: String,
+    showLastPlayed: Boolean,
+) {
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = EmulatorColors.TextPrimary,
+            )
+            Surface(
+                color = EmulatorColors.AccentBlue.copy(alpha = 0.16f),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text(
+                    text = "${games.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = EmulatorColors.AccentCyan,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.labelSmall,
+            color = EmulatorColors.TextMuted,
+        )
+        Spacer(Modifier.height(8.dp))
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(horizontal = 2.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            items(games, key = { it.romId }) { rom ->
+                CompactGameCard(
+                    rom = rom,
+                    onPlay = { onPlay(rom) },
+                    onRemove = { onRemove(rom) },
+                    removeLabel = removeLabel,
+                    showLastPlayed = showLastPlayed,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactGameCard(
+    rom: RomRecord,
+    onPlay: () -> Unit,
+    onRemove: () -> Unit,
+    removeLabel: String,
+    showLastPlayed: Boolean,
+) {
+    val coverBitmap = rememberCoverBitmap(rom.coverUri)
+    val accent = systemAccentColor(rom.system)
+
+    Surface(
+        color = EmulatorColors.CardSurface,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .width(196.dp)
+            .height(84.dp)
+            .border(1.dp, EmulatorColors.CardBorder, RoundedCornerShape(12.dp))
+            .clickable(onClick = onPlay),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(8.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(accent),
+            ) {
+                if (coverBitmap != null) {
+                    Image(
+                        bitmap = coverBitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(
+                        text = rom.system.shortLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(8.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = rom.effectiveTitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = EmulatorColors.TextPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val meta = if (showLastPlayed) {
+                    "Played ${formatLastPlayed(rom.lastPlayedEpochMs)}"
+                } else {
+                    rom.system.displayName
+                }
+                Text(
+                    text = meta,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = EmulatorColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier.size(28.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "$removeLabel: ${rom.effectiveTitle}",
+                    tint = EmulatorColors.TextSecondary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Radar sweep used by the library Quick Scan action (no extra icon dependency). */
+@Composable
+private fun RadarLogo(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val radius = size.minDimension / 2f - 0.5.dp.toPx()
+        val ringStroke = Stroke(width = 1.dp.toPx())
+
+        drawCircle(color = tint.copy(alpha = 0.65f), center = center, radius = radius, style = ringStroke)
+        drawCircle(color = tint.copy(alpha = 0.45f), center = center, radius = radius * 0.66f, style = ringStroke)
+        drawCircle(color = tint.copy(alpha = 0.30f), center = center, radius = radius * 0.33f, style = ringStroke)
+        drawLine(
+            color = tint.copy(alpha = 0.25f),
+            start = Offset(center.x - radius, center.y),
+            end = Offset(center.x + radius, center.y),
+            strokeWidth = 1.dp.toPx(),
+        )
+        drawLine(
+            color = tint.copy(alpha = 0.25f),
+            start = Offset(center.x, center.y - radius),
+            end = Offset(center.x, center.y + radius),
+            strokeWidth = 1.dp.toPx(),
+        )
+
+        val topLeft = Offset(center.x - radius, center.y - radius)
+        val arcSize = Size(radius * 2f, radius * 2f)
+        val sweepStart = -105f
+        val sweepAngle = 75f
+        drawArc(
+            color = tint.copy(alpha = 0.28f),
+            startAngle = sweepStart,
+            sweepAngle = sweepAngle,
+            useCenter = true,
+            topLeft = topLeft,
+            size = arcSize,
+        )
+        val sweepEndRad = Math.toRadians((sweepStart + sweepAngle).toDouble())
+        drawLine(
+            color = tint,
+            start = center,
+            end = Offset(
+                center.x + radius * cos(sweepEndRad).toFloat(),
+                center.y + radius * sin(sweepEndRad).toFloat(),
+            ),
+            strokeWidth = 1.5.dp.toPx(),
+        )
+        drawCircle(color = tint, center = center, radius = 1.5.dp.toPx())
+    }
+}
+
+private fun formatLastPlayed(epochMs: Long): String {
+    val elapsed = System.currentTimeMillis() - epochMs
+    return when {
+        elapsed < 60_000L -> "just now"
+        elapsed < 3_600_000L -> "${elapsed / 60_000L}m ago"
+        elapsed < 86_400_000L -> "${elapsed / 3_600_000L}h ago"
+        elapsed < 604_800_000L -> "${elapsed / 86_400_000L}d ago"
+        else -> SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(epochMs))
     }
 }
 

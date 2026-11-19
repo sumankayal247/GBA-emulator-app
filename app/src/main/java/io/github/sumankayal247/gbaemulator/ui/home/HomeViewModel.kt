@@ -45,6 +45,8 @@ enum class LibrarySort(val label: String) {
 data class HomeUiState(
     val allGames: List<RomRecord> = emptyList(),
     val filteredGames: List<RomRecord> = emptyList(),
+    val recentGames: List<RomRecord> = emptyList(),
+    val favoriteGames: List<RomRecord> = emptyList(),
     val savedFolders: List<SavedFolderRecord> = emptyList(),
     val preferences: EmulatorPreferences = EmulatorPreferences(),
     val searchQuery: String = "",
@@ -133,6 +135,8 @@ class HomeViewModel(
         HomeUiState(
             allGames = games,
             filteredGames = filtered,
+            recentGames = LibraryShelves.recents(games),
+            favoriteGames = LibraryShelves.favorites(games),
             savedFolders = folders,
             preferences = prefs,
             searchQuery = controls.query,
@@ -196,7 +200,7 @@ class HomeViewModel(
             }
             scanningFolders.value = true
             errorBanner.value = null
-            statusBanner.value = "Rescanning ${folders.size} game folder(s)..."
+            statusBanner.value = "Quick scanning ${folders.size} granted folder(s) for supported ROMs..."
             try {
                 val reports = libraryRepository.scanAllSavedFolders()
                 val totalFound = reports.sumOf { it.discoveredGames }
@@ -209,6 +213,21 @@ class HomeViewModel(
                 scanningFolders.value = false
             }
         }
+    }
+
+    /**
+     * Radar / quick scan entry point. Returns false when no SAF folder is configured so the
+     * Activity can open the folder picker; we never request broad device storage access.
+     */
+    fun quickScan(): Boolean {
+        if (uiState.value.savedFolders.isEmpty()) {
+            errorBanner.value = null
+            statusBanner.value =
+                "Quick scan needs a folder first. Choose the ROM folder to scan; Android does not allow app-wide storage scans."
+            return false
+        }
+        rescanSavedFolders()
+        return true
     }
 
     fun cancelScan() {
@@ -321,6 +340,22 @@ class HomeViewModel(
     fun toggleFavorite(record: RomRecord) {
         viewModelScope.launch {
             libraryRepository.setFavorite(record.romId, !record.isFavorite)
+        }
+    }
+
+    fun removeFromRecents(record: RomRecord) {
+        viewModelScope.launch {
+            libraryRepository.clearRecentHistory(record.romId)
+            statusBanner.value =
+                "Removed '${record.effectiveTitle}' from Recently Played. The game and its saves are unchanged."
+        }
+    }
+
+    fun removeFromFavorites(record: RomRecord) {
+        viewModelScope.launch {
+            libraryRepository.setFavorite(record.romId, false)
+            statusBanner.value =
+                "Removed '${record.effectiveTitle}' from Favorites. The game remains in your library."
         }
     }
 

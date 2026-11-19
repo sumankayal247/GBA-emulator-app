@@ -500,6 +500,14 @@ class LibraryRepository(
         dao.setFavorite(romId, favorite)
     }
 
+    /**
+     * Hides a game from the Recently Played shelf without removing it from the library.
+     * Its SRAM, save states, and original ROM file are untouched.
+     */
+    suspend fun clearRecentHistory(romId: String) = withContext(Dispatchers.IO) {
+        dao.clearLastPlayed(romId)
+    }
+
     suspend fun setCustomTitle(romId: String, title: String?) = withContext(Dispatchers.IO) {
         dao.setCustomTitle(romId, title?.trim()?.takeIf { it.isNotEmpty() })
     }

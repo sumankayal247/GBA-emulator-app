@@ -304,7 +304,12 @@ class MainActivity : ComponentActivity() {
                                     state = homeState,
                                     onPickFolder = { pickFolderLauncher.launch(null) },
                                     onImportSingleRom = { openRomLauncher.launch(arrayOf("*/*")) },
-                                    onRescanFolders = homeViewModel::rescanSavedFolders,
+                                    onQuickScan = {
+                                        if (!homeViewModel.quickScan()) {
+                                            // No SAF folders yet: let the user grant one, then scan it.
+                                            pickFolderLauncher.launch(null)
+                                        }
+                                    },
                                     onCancelScan = homeViewModel::cancelScan,
                                     onSearchChange = homeViewModel::updateSearchQuery,
                                     onFilterChange = homeViewModel::selectFilter,
@@ -319,6 +324,8 @@ class MainActivity : ComponentActivity() {
                                         relinkRomLauncher.launch(arrayOf("*/*"))
                                     },
                                     onToggleFavorite = homeViewModel::toggleFavorite,
+                                    onRemoveFromRecents = homeViewModel::removeFromRecents,
+                                    onRemoveFromFavorites = homeViewModel::removeFromFavorites,
                                     onRenameGame = homeViewModel::renameGame,
                                     onPickCoverImage = { record ->
                                         pendingCoverRecord = record

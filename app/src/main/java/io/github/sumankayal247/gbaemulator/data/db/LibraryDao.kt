@@ -34,6 +34,9 @@ interface LibraryDao {
     @Query("UPDATE games SET last_played_ms = :epochMs WHERE rom_id = :romId")
     suspend fun updateLastPlayed(romId: String, epochMs: Long)
 
+    @Query("UPDATE games SET last_played_ms = 0 WHERE rom_id = :romId")
+    suspend fun clearLastPlayed(romId: String)
+
     @Query("UPDATE games SET total_play_time_ms = total_play_time_ms + :deltaMs WHERE rom_id = :romId")
     suspend fun addPlayTime(romId: String, deltaMs: Long)
 

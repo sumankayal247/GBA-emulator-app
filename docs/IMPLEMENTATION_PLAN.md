@@ -155,10 +155,10 @@ docs/
 
 Reference: [08 — Library home](reference-images/08-library-home.jpg)
 
-- Header: app name, selected game directory, choose-directory action, and refresh/rescan action.
+- Header: app name, selected game directory, explicitly labelled folder/file actions, and a radar **Quick scan** action (rescan granted folders, or prompt for a folder when none is configured; no broad storage permission).
 - Group cards or rows by **Game Boy Advance**, **Game Boy Color**, and **Game Boy**.
 - Game item: title, system label, optional local cover image, last played, and favourite state.
-- Provide search, sort, favourites, and a Recently Played area.
+- Provide search, sort, favourites, and two bounded horizontal shelves: **Recently Played** (remove action clears only `last_played_ms`) and **Favorites** (remove action clears only `is_favorite`). Neither removes the game record, ROM file, SRAM, or save states.
 - If artwork is unavailable, use a neutral system-specific placeholder. Do not fetch or redistribute copyrighted artwork automatically.
 - Empty state: explain how to choose a ROM folder or select individual files.
 - Unsupported extensions should be ignored with a clear import message, not crash the scan.
@@ -554,7 +554,7 @@ Use only these status values:
 | Android app foundation and CI | IN PROGRESS | Gradle 8.13 / AGP 8.10.1 / Kotlin 2.1.20 / KSP / Room 2.7.1 / Compose + NDK project & CI workflow (unit tests, unsuppressed Lint, Debug & R8 Release APKs) passing; awaiting hardware install & upgrade test |
 | Native emulator lifecycle/JNI | IN PROGRESS | Single-owner worker thread, 7-state FSM, bounded shutdown, screenshot capture, core-option JSON/overrides, and JNI bridge implemented + 9/9 host & ASan tests passing; real-device lifecycle tests pending |
 | Video/audio pipeline | IN PROGRESS | EGL/GLES3 `SurfaceView` renderer + NDK AAudio SPSC resampled pipeline implemented; real-device benchmarks & `docs/PERFORMANCE_BUDGET.md` pending |
-| SAF import and library | IN PROGRESS | Room v1 schema (`games`, `rom_sources`, `saved_folders`, `cheats`, `core_option_overrides`), cancellable SAF `OpenDocumentTree` scanner, single-file import, SHA-256 identity, relink, custom covers, search/filter/sort, and unit tests implemented; real-device OEM SAF provider tests pending |
+| SAF import and library | IN PROGRESS | Room v1 schema (`games`, `rom_sources`, `saved_folders`, `cheats`, `core_option_overrides`), cancellable SAF `OpenDocumentTree` scanner, single-file import, SHA-256 identity, relink, custom covers, search/filter/sort, labelled folder/file actions with SAF "Use this folder" hint, radar Quick scan, removable Recently Played/Favorites shelves, and unit tests implemented; real-device OEM SAF provider tests pending |
 | SRAM persistence and recovery | IN PROGRESS | Atomic temp+fsync+rename writes, `.bak` corruption recovery, and SAF export/import implemented + unit & native round-trip tests; real-device force-stop test pending |
 | Touch controls and responsive layouts | IN PROGRESS | Portrait & landscape virtual handhelds, multi-pointer `TouchInputTracker`, layout editor, and proposed global shell tint / shared scaled preview changes; build, real-device multi-touch, preview/rotation and owner review pending |
 | Save-state slots | IN PROGRESS | Per-ROM isolated 8-slot save states with captured PNG thumbnails, SHA-256 checksums, `.bak` quarantine/recovery, overwrite confirmation, and native + JVM unit tests implemented; real-device round-trip verification pending |
